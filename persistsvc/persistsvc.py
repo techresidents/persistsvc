@@ -9,21 +9,21 @@ import settings
 
 from trpycore.process.pid import pidfile, PidFileException
 from trsvcscore.service.base import Service
-from trschedulesvc.gen import TScheduleService
+from trpersistsvc.gen import TPersistService
 
-from handler import ScheduleServiceHandler
+from handler import PersistServiceHandler
 
-class ScheduleService(Service):
+class PersistService(Service):
     def __init__(self):
 
-        handler = ScheduleServiceHandler()
+        handler = PersistServiceHandler()
 
-        super(ScheduleService, self).__init__(
+        super(PersistService, self).__init__(
                 name=settings.SERVICE,
                 interface=settings.SERVER_INTERFACE,
                 port=settings.SERVER_PORT,
                 handler=handler,
-                processor=TScheduleService.Processor(handler),
+                processor=TPersistService.Processor(handler),
                 threads=1)
  
 def main(argv):
@@ -35,7 +35,7 @@ def main(argv):
 
             
             #Create service
-            service = ScheduleService()
+            service = PersistService()
             
             #Register signal handlers
             def sigterm_handler(signum, stack_frame):

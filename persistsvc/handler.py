@@ -7,15 +7,15 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from trpycore.thread.util import join
 from trsvcscore.service.handler import ServiceHandler
-from trschedulesvc.gen import TScheduleService
+from trpersistsvc.gen import TPersistService
 
 import version
 import settings
-from scheduler import ChatScheduler
+from persister import ChatPersister
 
-class ScheduleServiceHandler(TScheduleService.Iface, ServiceHandler):
+class PersistServiceHandler(TPersistService.Iface, ServiceHandler):
     def __init__(self):
-        super(ScheduleServiceHandler, self).__init__(
+        super(PersistServiceHandler, self).__init__(
                 name=settings.SERVICE,
                 interface=settings.SERVER_INTERFACE,
                 port=settings.SERVER_PORT,
@@ -24,29 +24,30 @@ class ScheduleServiceHandler(TScheduleService.Iface, ServiceHandler):
                 zookeeper_hosts=settings.ZOOKEEPER_HOSTS,
                 database_connection=settings.DATABASE_CONNECTION)
 
-        self.log = logging.getLogger("%s.%s" % (__name__, ScheduleServiceHandler.__name__))
+        self.log = logging.getLogger("%s.%s" % (__name__, PersistServiceHandler.__name__))
 
-        #create scheduler which does the real work
-        self.scheduler = ChatScheduler(
-                settings.SCHEDULER_THREADS,
+        #create persister which does the real work
+        self.persister = ChatPersister(
+                settings.PERSISTER_THREADS,
                 self.get_database_session,
-                settings.SCHEDULER_POLL_SECONDS)
+                settings.PERSISTER_POLL_SECONDS)
     
     def start(self):
         """Start handler."""
-        super(ScheduleServiceHandler, self).start()
-        self.scheduler.start()
+        super(PersistServiceHandler, self).start()
+        self.persister.start()
 
     
     def stop(self):
         """Stop handler."""
-        self.scheduler.stop()
-        super(ScheduleServiceHandler, self).stop()
+        self.persister.stop()
+        super(PersistServiceHandler, self).stop()
 
     def join(self, timeout=None):
         """Join handler."""
-        join([self.scheduler, super(ScheduleServiceHandler, self)], timeout)
+        join([self.persister, super(PersistServiceHandler, self)], timeout)
 
     def reinitialize(self, requestContext):
         """Reinitialize - nothing to do."""
+        #TODO - anything to do here?
         pass
