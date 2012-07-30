@@ -4,14 +4,14 @@ import socket
 ENV = os.getenv("SERVICE_ENV", "default")
 
 #Service Settings
-SERVICE = "schedulesvc"
+SERVICE = "persistsvc"
 SERVICE_PID_FILE = "%s.%s.pid" % (SERVICE, ENV)
 SERVICE_JOIN_TIMEOUT = 1
 
 #Server settings
 SERVER_HOST = socket.gethostname()
 SERVER_INTERFACE = "0.0.0.0"
-SERVER_PORT = 9092
+SERVER_PORT = 9093
 
 #Database settings
 DATABASE_HOST = "localdev"
@@ -23,22 +23,6 @@ DATABASE_CONNECTION = "postgresql+psycopg2://%s:%s@/%s?host=%s" % (DATABASE_USER
 #Zookeeper settings
 ZOOKEEPER_HOSTS = ["localdev:2181"]
 
-#Riak settings
-RIAK_HOST = "localdev"
-RIAK_PORT = 8087
-RIAK_SESSION_BUCKET = "tr_sessions"
-RIAK_SESSION_POOL_SIZE = 4
-
-#Tokbox settings
-TOKBOX_API_KEY = '15889991'
-TOKBOX_API_SECRET = '19a6fb225790a2cf3e048c58ef2fdcc425e7b599'
-TOKBOX_IS_STAGING = True
-
-#Scheduler settings
-SCHEDULER_THREADS = 4
-SCHEDULER_POLL_SECONDS = 60
-SCHEDULER_MIN_GROUP_SIZE = 2
-SCHEDULER_MAX_GROUP_SIZE = 3
 
 #Logging settings
 LOGGING = {

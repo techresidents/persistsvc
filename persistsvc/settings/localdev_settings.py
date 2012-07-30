@@ -7,7 +7,7 @@ ENV = "localdev"
 #Server settings
 SERVER_HOST = socket.gethostname()
 SERVER_INTERFACE = "0.0.0.0"
-SERVER_PORT = 9092
+SERVER_PORT = 9093
 
 #Service Settings
 SERVICE_PID_FILE = "/opt/tr/data/%s/pid/%s.%s.pid" % (SERVICE, SERVICE, ENV)
@@ -22,23 +22,6 @@ DATABASE_CONNECTION = "postgresql+psycopg2://%s:%s@/%s?host=%s" % (DATABASE_USER
 
 #Zookeeper settings
 ZOOKEEPER_HOSTS = ["localhost:2181"]
-
-#Riak settings
-RIAK_HOST = "localhost"
-RIAK_PORT = 8087
-RIAK_SESSION_BUCKET = "tr_sessions"
-RIAK_SESSION_POOL_SIZE = 4
-
-#Tokbox settings
-TOKBOX_API_KEY = '15889991'
-TOKBOX_API_SECRET = '19a6fb225790a2cf3e048c58ef2fdcc425e7b599'
-TOKBOX_IS_STAGING = True
-
-#Scheduler settings
-SCHEDULER_THREADS = 4
-SCHEDULER_POLL_SECONDS = 60
-SCHEDULER_MIN_GROUP_SIZE = 2
-SCHEDULER_MAX_GROUP_SIZE = 3
 
 
 #Logging settings
