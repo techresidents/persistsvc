@@ -27,7 +27,7 @@ class PersistServiceHandler(TPersistService.Iface, ServiceHandler):
         self.log = logging.getLogger("%s.%s" % (__name__, PersistServiceHandler.__name__))
 
         #create persister which does the real work
-        self.persister = ChatPersister(
+        self.chat_persister = ChatPersister(
                 settings.PERSISTER_THREADS,
                 self.get_database_session,
                 settings.PERSISTER_POLL_SECONDS)
@@ -35,17 +35,17 @@ class PersistServiceHandler(TPersistService.Iface, ServiceHandler):
     def start(self):
         """Start handler."""
         super(PersistServiceHandler, self).start()
-        self.persister.start()
+        self.chat_persister.start()
 
     
     def stop(self):
         """Stop handler."""
-        self.persister.stop()
+        self.chat_persister.stop()
         super(PersistServiceHandler, self).stop()
 
     def join(self, timeout=None):
         """Join handler."""
-        join([self.persister, super(PersistServiceHandler, self)], timeout)
+        join([self.chat_persister, super(PersistServiceHandler, self)], timeout)
 
     def reinitialize(self, requestContext):
         """Reinitialize - nothing to do."""
