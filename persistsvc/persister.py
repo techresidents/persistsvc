@@ -67,8 +67,9 @@ class ChatPersisterThreadPool(ThreadPool):
         """
         self.log.info("Starting chat persist job for job_id=%d ..." % job_id)
         session = session or self.create_db_session()
-        job = session.query(ChatPersistJob).filter(ChatPersistJob.job_id==job_id).first()
+        job = session.query(ChatPersistJob).filter(ChatPersistJob.id==job_id).first()
         job.start = func.current_timestamp()
+        job.owner = 'persistsvc' #TODO what do we want to name this?
         session.commit()
 
     def _end_chat_persist_job(self, job_id, session=None):
@@ -79,7 +80,7 @@ class ChatPersisterThreadPool(ThreadPool):
         """
         self.log.info("Ending chat persist job for job_id=%d ..." % job_id)
         session = session or self.create_db_session()
-        job = session.query(ChatPersistJob).filter(ChatPersistJob.job_id==job_id).first()
+        job = session.query(ChatPersistJob).filter(ChatPersistJob.id==job_id).first()
         job.end = func.current_timestamp()
         session.commit()
 
@@ -89,7 +90,9 @@ class ChatPersisterThreadPool(ThreadPool):
         Abort the current persist job, by...
         """
         self.log.error("Aborting chat persist job for job_id=%d ..." % job_id)
-        # TODO I think we should unwind any created minutes and tags and set the job owner as null
+        # TODO How do weant to handle aborting?
+        # Need to unwind who owns the job and who started the job.
+
 
     def _create_chat_entities(self, job_id, session=None):
         """Create chat tags and chat minutes.
@@ -100,40 +103,110 @@ class ChatPersisterThreadPool(ThreadPool):
         """
         self.log.info("Persisting chat for job_id=%d" % job_id)
 
+        # TODO Need to be sure to handle time zones properly.  Need to make
+        # certain that Django and the service layer don't conflict in how
+        # timestamps and other time data is stored in the db.
+
         try:
-            session = session or self.create_db_session()
+            db_session = session or self.create_db_session()
 
             # Retrieve the chat session id
-            job = session.query(ChatPersistJob).filter(ChatPersistJob.job_id==job_id).first()
+            job = session.query(ChatPersistJob).filter(ChatPersistJob.id==job_id).first()
             chat_session_id = job.chat_session.id
 
-            # Retrieve all messages with the specified chat session ID
-            chat_messages = session.query(ChatMessage).\
-                filter(ChatMessage.chat_session == chat_session_id).\
-                all()
-            self.log.info("Found %d messages for chat_session_id=%d" % (len(messages), chat_session_id))
+            # Find all chat minute messages and store them in the db
+            self._persist_chat_minutes(db_session, chat_session_id)
 
-            # Iterate through messages, filtering based upon biz rules
-            chat_messages_to_persist = self._filter_chat_messages(chat_messages)
+            # Find all speaking marker messages and store them in the db
+            self._persist_chat_speaking_markers(db_session, chat_session_id)
 
-            # Create chatTags and chatMinutes entries in db
-            for message in chat_messages_to_persist:
-                self.log.info("Persisting messages")
-                # if messageType is X, create db ojbect
-                # if messageType is Y, create db object
-                # Write all message to db
+            # Find all tag messages and store them in the db
+            self._persist_chat_tags(db_session, chat_session_id)
 
         except Exception:
             session.rollback()
             raise
 
-    def _filter_chat_messages(self, chat_messages):
-        """Apply business rules to filter which chat messages will be persisted.
+    def _persist_chat_minutes(self, db_session, chat_session_id):
+        """ Read all chat messages, pull out the chat minute messages,
+            and store them in the db.
+        """
+
+        # Retrieve all Minute messages
+        chat_minute_messages = db_session.query(ChatMessage).\
+            filter(ChatMessage.chat_session == chat_session_id).\
+            filter(ChatMessage.type == 'minuteUpdate').\
+            all()
+            #order by timestamp
+        self.log.info("Found %d minute messages for chat_session_id=%d" % (len(chat_minute_messages), chat_session_id))
+
+        #TODO need to check for duplicate chat minute messages
+        #_filter_chat_minutes
+
+        # Create chatMinutes entries in db
+        # for message in chat_minute_messages:
+            # deserialize data blob of message
+            # Write Minute to db
+
+    def _persist_chat_speaking_markers(self, db_session, chat_session_id):
+        """ Read all chat messages, find the speaking marker messages,
+            and store them in the db.
+        """
+        # Retrieve all speaking marker messages
+        chat_marker_messages = db_session.query(ChatMessage).\
+            filter(ChatMessage.chat_session == chat_session_id).\
+            filter(ChatMessage.type == 'createMarker').\
+            all()
+            #order by timestamp
+        self.log.info("Found %d marker messages for chat_session_id=%d" % (len(chat_marker_messages), chat_session_id))
+
+        # Deserialize actual chat message data
+        # Pull out only the speaking markers
+        # Apply biz rules / validation to remove any unneeded markers
+        # Persist
+
+    def _persist_chat_tags(self, db_session, chat_session_id):
+        """ Read all chat messages, find tag messages,
+            and store them in the db.
+        """
+        # Retrieve all tag messages
+        chat_tag_messages = db_session.query(ChatMessage).\
+            filter(ChatMessage.chat_session == chat_session_id).\
+            filter(ChatMessage.type == 'createTag').\
+            all()
+            #order by timestamp
+        self.log.info("Found %d marker messages for chat_session_id=%d" % (len(chat_marker_messages), chat_session_id))
+
+        # Deserialize actual chat message data
+        # Pull out only the speaking markers
+        # Apply biz rules / validation to remove any unneeded markers
+        # Persist
+
+        # Iterate through messages, filtering based using biz rules
+        filtered_chat_tag_messages = self._filter_chat_tags(chat_tag_messages, chat_minute_messages)
+
+        # Create chatTags entries in db
+        for message in filtered_chat_tag_messages:
+            self.log.info("Persisting tag messages")
+            # deserialize data blob of message
+            # Write Tag to db
+
+
+    def _filter_chat_tags(self, chat_tag_messages, chat_minute_messages):
+        """Apply business rules to filter down which chat messages will be persisted.
 
         Given a collection of chat messages associated with a chat, this method will
         filter the messages down to only those we want to persist.
+
+        Removes duplicate tags that occur within the same chat minute.
+        Removes tags that were added and then deleted within the same chat minute.
         """
-        self.log.info("Filtering chat messages based upon business rules")
+        for message in chat_tag_messages:
+            self.log.info("Filtering chat messages based upon business rules")
+
+        return chat_messages
+
+
 
 
 class ChatPersister(object):
