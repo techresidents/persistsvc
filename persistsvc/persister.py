@@ -9,7 +9,7 @@ from sqlalchemy.sql import func
 from trpycore.alg.grouping import group
 from trpycore.thread.util import join
 from trpycore.thread.threadpool import ThreadPool
-from trsvcscore.models import Chat, ChatRegistration, ChatScheduleJob, ChatSession, ChatUser
+from trsvcscore.models import Chat, ChatRegistration, ChatPersistJob, ChatScheduleJob, ChatSession, ChatUser
 
 import settings
 
@@ -67,7 +67,7 @@ class ChatPersisterThreadPool(ThreadPool):
         """
         self.log.info("Starting chat persist job for job_id=%d ..." % job_id)
         session = session or self.create_db_session()
-        job = session.query(ChatPersistJob).filter(ChatPersistJob.id==job_id).first()
+        job = session.query(ChatPersistJob).filter(ChatPersistJob.id==job_id).one()
         job.start = func.current_timestamp()
         job.owner = 'persistsvc' #TODO what do we want to name this?
         session.commit()
@@ -75,23 +75,27 @@ class ChatPersisterThreadPool(ThreadPool):
     def _end_chat_persist_job(self, job_id, session=None):
         """End ChatPersistJob.
         
-        Mark the current job record finished, by updating the end
-        field with the current timestamp.
+        Mark the current job record finished by updating the end
+        field with the current time.
         """
         self.log.info("Ending chat persist job for job_id=%d ..." % job_id)
         session = session or self.create_db_session()
-        job = session.query(ChatPersistJob).filter(ChatPersistJob.id==job_id).first()
+        job = session.query(ChatPersistJob).filter(ChatPersistJob.id==job_id).one()
         job.end = func.current_timestamp()
         session.commit()
 
     def _abort_chat_persist_job(self, job_id, session=None):
         """Abort ChatPersitJob.
 
-        Abort the current persist job, by...
+        Abort the current persist job. Reset the start column and
+        owner columns to NULL.
         """
         self.log.error("Aborting chat persist job for job_id=%d ..." % job_id)
-        # TODO How do weant to handle aborting?
-        # Need to unwind who owns the job and who started the job.
+        session = session or self.create_db_session()
+        job = session.query(ChatPersistJob).filter(ChatPersistJob.id==job_id).one()
+        job.start = None
+        job.owner = None
+        session.commit()
 
 
     def _create_chat_entities(self, job_id, session=None):
@@ -101,30 +105,31 @@ class ChatPersisterThreadPool(ThreadPool):
         chat tags and minutes for the chat based on the existing chat messages
         that were created by the chat service.
         """
-        self.log.info("Persisting chat for job_id=%d" % job_id)
 
         # TODO Need to be sure to handle time zones properly.  Need to make
         # certain that Django and the service layer don't conflict in how
         # timestamps and other time data is stored in the db.
 
         try:
+            self.log.info("Persisting chat for job_id=%d" % job_id)
+
             db_session = session or self.create_db_session()
 
             # Retrieve the chat session id
-            job = session.query(ChatPersistJob).filter(ChatPersistJob.id==job_id).first()
+            job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==job_id).one()
             chat_session_id = job.chat_session.id
 
             # Find all chat minute messages and store them in the db
-            self._persist_chat_minutes(db_session, chat_session_id)
+            # self._persist_chat_minutes(db_session, chat_session_id)
 
             # Find all speaking marker messages and store them in the db
-            self._persist_chat_speaking_markers(db_session, chat_session_id)
+            # self._persist_chat_speaking_markers(db_session, chat_session_id)
 
             # Find all tag messages and store them in the db
-            self._persist_chat_tags(db_session, chat_session_id)
+            # self._persist_chat_tags(db_session, chat_session_id)
 
         except Exception:
-            session.rollback()
+            db_session.rollback()
             raise
 
     def _persist_chat_minutes(self, db_session, chat_session_id):
@@ -133,15 +138,17 @@ class ChatPersisterThreadPool(ThreadPool):
         """
 
         # Retrieve all Minute messages
+        message_type = session.query(ChatMessageType).filter(ChatMessageType.name=='MINUTE_UPDATE').one()
         chat_minute_messages = db_session.query(ChatMessage).\
             filter(ChatMessage.chat_session == chat_session_id).\
-            filter(ChatMessage.type == 'minuteUpdate').\
+            filter(ChatMessage.type == message_type.id).\
+            order_by(ChatMessageType.timestamp).\
             all()
-            #order by timestamp
+
         self.log.info("Found %d minute messages for chat_session_id=%d" % (len(chat_minute_messages), chat_session_id))
 
-        #TODO need to check for duplicate chat minute messages
-        #_filter_chat_minutes
+        # Check for duplicate chat minute messages
+        # TODO _filter_chat_minutes()
 
         # Create chatMinutes entries in db
         # for message in chat_minute_messages:
@@ -178,9 +185,7 @@ class ChatPersisterThreadPool(ThreadPool):
         self.log.info("Found %d marker messages for chat_session_id=%d" % (len(chat_marker_messages), chat_session_id))
 
         # Deserialize actual chat message data
-        # Pull out only the speaking markers
-        # Apply biz rules / validation to remove any unneeded markers
-        # Persist
+        # Pull out only the tag markers
 
         # Iterate through messages, filtering based using biz rules
         filtered_chat_tag_messages = self._filter_chat_tags(chat_tag_messages, chat_minute_messages)
@@ -189,8 +194,8 @@ class ChatPersisterThreadPool(ThreadPool):
         for message in filtered_chat_tag_messages:
             self.log.info("Persisting tag messages")
             # deserialize data blob of message
+            # lookup tag name to see if we can reference a Tag
             # Write Tag to db
-
 
     def _filter_chat_tags(self, chat_tag_messages, chat_minute_messages):
         """Apply business rules to filter down which chat messages will be persisted.
@@ -254,7 +259,7 @@ class ChatPersister(object):
 
         while self.running:
             try:
-                self.log.info("ChatPersister is running")
+                self.log.info("ChatPersister is checking for new jobs to process...")
 
                 #Look for ChatPersistJobs with no owner.
                 #This indicates a job which

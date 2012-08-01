@@ -9,9 +9,9 @@ SERVICE_PID_FILE = "%s.%s.pid" % (SERVICE, ENV)
 SERVICE_JOIN_TIMEOUT = 1
 
 #Server settings
-SERVER_HOST = socket.gethostname()
-SERVER_INTERFACE = "0.0.0.0"
-SERVER_PORT = 9093
+THRIFT_SERVER_ADDRESS = socket.gethostname()
+THRIFT_SERVER_INTERFACE = "0.0.0.0"
+THRIFT_SERVER_PORT = 9093
 
 #Database settings
 DATABASE_HOST = "localdev"

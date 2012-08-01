@@ -1,26 +1,16 @@
 import logging
-import os
-import sys
-
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../"))
-sys.path.insert(0, PROJECT_ROOT)
 
 from trpycore.thread.util import join
-from trsvcscore.service.handler import ServiceHandler
+from trsvcscore.service.handler.service import ServiceHandler
 from trpersistsvc.gen import TPersistService
 
-import version
 import settings
 from persister import ChatPersister
 
 class PersistServiceHandler(TPersistService.Iface, ServiceHandler):
-    def __init__(self):
+    def __init__(self, service):
         super(PersistServiceHandler, self).__init__(
-                name=settings.SERVICE,
-                interface=settings.SERVER_INTERFACE,
-                port=settings.SERVER_PORT,
-                version=version.VERSION,
-                build=version.BUILD,
+		service,
                 zookeeper_hosts=settings.ZOOKEEPER_HOSTS,
                 database_connection=settings.DATABASE_CONNECTION)
 
