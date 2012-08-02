@@ -7,12 +7,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql import func
 
 from trpycore.alg.grouping import group
+from trpycore.timezone import tz
 from trpycore.thread.util import join
 from trpycore.thread.threadpool import ThreadPool
 from trsvcscore.models import Chat, ChatRegistration, ChatPersistJob, ChatScheduleJob, ChatSession, ChatUser
 
 import settings
 
+class DuplicatePersistJobException(Exception):
+    pass
 
 class ChatPersisterThreadPool(ThreadPool):
     """Persist chat sessions.
@@ -54,6 +57,12 @@ class ChatPersisterThreadPool(ThreadPool):
             self._start_chat_persist_job(job_id)
             self._create_chat_entities(job_id)
             self._end_chat_persist_job(job_id)
+        except DuplicatePersistJobException as warning:
+            self.log.warning(warning)
+            # This means that the PersistJob was claimed just before
+            # this process claimed it. Stop processing the job. There's
+            # no need to abort the job since no processing of the job
+            # has occurred.
         except Exception as error:
             self.log.exception(error)
             self._abort_chat_persist_job(job_id)
@@ -66,11 +75,24 @@ class ChatPersisterThreadPool(ThreadPool):
         field with the current timestamp.
         """
         self.log.info("Starting chat persist job for job_id=%d ..." % job_id)
+
         session = session or self.create_db_session()
-        job = session.query(ChatPersistJob).filter(ChatPersistJob.id==job_id).one()
-        job.start = func.current_timestamp()
-        job.owner = 'persistsvc' #TODO what do we want to name this?
+        # This query.update generates the following sql:
+        # UPDATE chat_persist_job SET owner='persistsvc' WHERE
+        # chat_persist_job.id = 1 AND chat_persist_job.owner IS NULL
+        num_rows_updated = session.query(ChatPersistJob).\
+            filter(ChatPersistJob.id==job_id).\
+            filter(ChatPersistJob.owner==None).\
+            update({
+                ChatPersistJob.owner: 'persistsvc',
+                ChatPersistJob.start: tz.utcnow()
+            })
+
+        if (not num_rows_updated):
+            raise DuplicatePersistJobException(message="Chat persist job % already claimed. Stopping processing." % job_id)
+
         session.commit()
+
 
     def _end_chat_persist_job(self, job_id, session=None):
         """End ChatPersistJob.
