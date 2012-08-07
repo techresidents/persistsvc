@@ -5,9 +5,16 @@ from trsvcscore.service.handler.service import ServiceHandler
 from trpersistsvc.gen import TPersistService
 
 import settings
-from persister import ChatPersister
+from persister import ChatPersistJobMonitor
 
 class PersistServiceHandler(TPersistService.Iface, ServiceHandler):
+    """
+        PersistServiceHandler manages the persist service.
+
+        PersistServiceHandler is responsible for managing
+        the service functionality including service start,
+        stop, join, and reinitialize.
+    """
     def __init__(self, service):
         super(PersistServiceHandler, self).__init__(
 		service,
@@ -16,8 +23,9 @@ class PersistServiceHandler(TPersistService.Iface, ServiceHandler):
 
         self.log = logging.getLogger("%s.%s" % (__name__, PersistServiceHandler.__name__))
 
-        #create persister which does the real work
-        self.chat_persister = ChatPersister(
+        #create chat persist monitor which scans for new jobs
+        # to process and delegates the real work to persist data
+        self.chat_persister = ChatPersistJobMonitor(
                 settings.PERSISTER_THREADS,
                 self.get_database_session,
                 settings.PERSISTER_POLL_SECONDS)

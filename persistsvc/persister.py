@@ -13,8 +13,10 @@ from trpycore.thread.threadpool import ThreadPool
 from trsvcscore.models import Chat, ChatRegistration, \
     ChatScheduleJob, ChatSession, ChatUser,\
     ChatPersistJob, ChatMessage, ChatMessageType, \
-    ChatMinute
+    ChatMinute, ChatTag
 
+from cache import ChatMessageCache
+from mapper import ChatMessageMapper
 import settings
 
 class DuplicatePersistJobException(Exception):
@@ -24,11 +26,235 @@ class DuplicatePersistJobException(Exception):
     def __str__(self):
         return self.__class__.__name__ + ": " + self.message
 
+
+class ChatPersister(object):
+    """
+        Responsible for persisting all chat messages that we
+        are interested in storing in the database.
+
+        This class is responsible for reading all the ChatMessages
+        that the Chat Service has persisted and creating new entities
+        in the db according to the details of the chat message.
+
+        Currently creates ChatMinute, ChatMarker, and ChatTag entities.
+    """
+
+    def __init__(self, db_session_factory, job_id):
+        self.log = logging.getLogger(__name__)
+        self.db_session_factory = db_session_factory
+        self.job_id = job_id
+        self.chat_session_id = None
+        self.chat_message_cache = None
+
+    def create_db_session(self):
+        """Create  new sqlalchemy db session.
+
+        Returns:
+            sqlalchemy db session
+        """
+        return self.db_session_factory()
+
+    def persist(self):
+        """ This method is responsible for persisting
+            chat message data
+
+            Only data we plan on consuming is being persisted.
+        """
+        try:
+            self._start_chat_persist_job()
+
+            db_session = self.create_db_session()
+            self._persist_chat_data(db_session)
+
+            self._end_chat_persist_job()
+        except DuplicatePersistJobException as warning:
+            self.log.warning(warning)
+            # This means that the PersistJob was claimed just before
+            # this thread claimed it. Stop processing the job. There's
+            # no need to abort the job since no processing of the job
+            # has occurred.
+        except Exception as error:
+            db_session.rollback()
+            self.log.exception(error)
+            self._abort_chat_persist_job()
+
+    def _start_chat_persist_job(self):
+        """Start processing the chat persist job.
+
+        Mark the ChatPersistJob record in the db as started by updating the start
+        field with the current timestamp.
+        """
+        self.log.info("Starting chat persist job with job_id=%d ..." % self.job_id)
+
+        db_session = self.create_db_session()
+
+        # This query.update generates the following sql:
+        # UPDATE chat_persist_job SET owner='persistsvc' WHERE
+        # chat_persist_job.id = 1 AND chat_persist_job.owner IS NULL
+        num_rows_updated = db_session.query(ChatPersistJob).\
+            filter(ChatPersistJob.id==self.job_id).\
+            filter(ChatPersistJob.owner==None).\
+            update({
+                ChatPersistJob.owner: 'persistsvc',
+                ChatPersistJob.start: tz.utcnow()
+            })
+
+        if (not num_rows_updated):
+            raise DuplicatePersistJobException(message="Chat persist job with job_id=%d already claimed. Stopping processing." % self.job_id)
+
+        db_session.commit()
+
+    def _end_chat_persist_job(self):
+        """End processing of the ChatPersistJob.
+
+        Mark the ChatPersistJob record as finished by updating the end
+        field with the current time.
+        """
+        self.log.info("Ending chat persist job with job_id=%d ..." % self.job_id)
+        db_session = self.create_db_session()
+        job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
+        job.end = func.current_timestamp()
+        db_session.commit()
+
+    def _abort_chat_persist_job(self, db_session):
+        """Abort the ChatPersistJob.
+
+        Abort the current persist job. Reset the start column and
+        owner columns to NULL.
+        """
+        self.log.error("Aborting chat persist job with job_id=%d ..." % self.job_id)
+        db_session = self.create_db_session()
+        job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
+        job.start = None
+        job.owner = None
+        db_session.commit()
+
+    def _persist_chat_data(self, db_session):
+        """Create chat tags and chat minutes.
+
+        This method will create the necessary chat tags and
+        minutes for the chat based on the existing chat messages
+        that were created by the chat service.
+        """
+        try:
+            self.log.info("Starting processing of persist job with job_id=%d" % self.job_id)
+
+            # Retrieve the chat session id
+            job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
+            self.chat_session_id = job.chat_session.id
+
+            # Cache all chat messages
+            self._cache_chat_messages(db_session)
+
+            # Find all chat minute messages and store them in the db
+            # This data has to be processed first so that we can assign other data
+            # to its associated chat minute.
+            #self._persist_chat_minutes(db_session)
+
+            # Find all speaking marker messages and store them in the db
+            # self._persist_chat_speaking_markers(chat_session_id)
+
+            # Find all tag messages and store them in the db
+            # self._persist_chat_tags(db_session, chat_session_id)
+
+            # commit all db changes
+            db_session.commit()
+
+        except Exception:
+            db_session.rollback()
+            raise
+
+    def _cache_chat_messages(self, db_session):
+        """
+            Cache chat messages.
+
+            Private method to cache chat messages so that the chat
+            persist service can access this data without having to
+            hit the database.
+        """
+
+        # Set message type IDs within cache so that the
+        # cache can sort messages by type
+        chat_marker_type = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MARKER_CREATE').one()
+        chat_minute_type = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MINUTE_UPDATE').one()
+        chat_tag_type = db_session.query(ChatMessageType).filter(ChatMessageType.name=='TAG_CREATE').one()
+        self.chat_message_cache = ChatMessageCache(
+            chat_marker_type.id,
+            chat_minute_type.id,
+            chat_tag_type.id
+        )
+
+        # Add all chat messages to cache
+        chat_messages = db_session.query(ChatMessage).\
+            filter(ChatMessage.chat_session_id == self.chat_session_id).\
+            order_by(ChatMessage.timestamp).\
+            all()
+
+        for message in chat_messages:
+            self.chat_message_cache.add(message)
+
+    def _persist_chat_minutes(self, db_session):
+        """
+            Creates ChatMinute entries in the db
+
+            Read all chat messages, pull out the chat minute messages,
+            and store them in the db.
+        """
+
+        # Retrieve all Minute messages
+        chat_minute_messages = self.chat_message_cache.get_chat_minutes()
+        self.log.info("Found %d messages of type 'Minute' for chat_session_id=%d" %
+                      (len(chat_minute_messages),
+                       self.chat_session_id))
+
+        # Create chat minute objects from chat messages
+        chat_id_map = {}
+        for message in chat_minute_messages:
+            chat_minute = ChatMessageMapper.chatMessage_to_ChatMinute(message)
+            chat_id_map[message] = chat_minute
+            db_session.add(chat_minute)
+
+        # Explicit flush so that we can reference chat_minute.id
+        db_session.flush()
+
+    def _persist_chat_speaking_markers(self, db_session):
+        """ Read all chat messages, find the speaking marker messages,
+            and store them in the db.
+        """
+
+        #TODO this is not filtering out speaking markers yet
+
+        # Retrieve all speaking marker messages
+        chat_marker_messages = self.chat_message_cache.get_chat_markers()
+        self.log.info("Found %d message of type 'Marker' for chat_session_id=%d" %
+                      (len(chat_marker_messages),
+                       self.chat_session_id))
+
+        # Create chat marker objects from chat messages
+        for message in chat_marker_messages:
+            chat_speaking_marker = ChatMessageMapper.chatMessage_to_ChatSpeakingMarker(
+                message,
+                self.chat_message_cache.get_chat_minutes())
+            db_session.add(chat_speaking_marker)
+
+    def _persist_chat_tags(self, db_session):
+        """ Read all chat messages, find tag messages,
+            and store them in the db.
+        """
+        # Retrieve all chat tag messages
+        chat_tag_messages = self.chat_message_cache.get_chat_tags()
+        self.log.info("Found %d messages of type 'Tag' for chat_session_id=%d" % (len(chat_tag_messages), self.chat_session_id))
+
+        # Create chatTags entries in db
+        for message in filtered_chat_tag_messages:
+            chat_tag = ChatMessageMapper.chatMessage_to_ChatTag(message)
+            db_session.add(chat_tag)
+
 class ChatPersisterThreadPool(ThreadPool):
-    """Persist chat sessions.
+    """Thread pool used to process chat persist jobs.
 
     Given a work item (job_id), this class will process the
-    job and persist the associated chat data to the db.
+    job and delegate the work to persist the associated chat data to the db.
     """
     def __init__(self, num_threads, db_session_factory):
         """Constructor.
@@ -41,14 +267,6 @@ class ChatPersisterThreadPool(ThreadPool):
         self.log = logging.getLogger(__name__)
         self.db_session_factory = db_session_factory
         super(ChatPersisterThreadPool, self).__init__(num_threads)
-    
-    def create_db_session(self):
-        """Create  new sqlalchemy db session.
-
-        Returns:
-            sqlalchemy db session
-        """
-        return self.db_session_factory()
 
     def process(self, job_id):
         """Worker thread process method.
@@ -56,242 +274,14 @@ class ChatPersisterThreadPool(ThreadPool):
         This method will be invoked by each worker thread when
         a new work item (job_id) is put on the queue.
         """
-        try:
-            self._start_chat_persist_job(job_id)
-            self._create_chat_entities(job_id)
-            self._end_chat_persist_job(job_id)
-        except DuplicatePersistJobException as warning:
-            self.log.warning(warning)
-            # This means that the PersistJob was claimed just before
-            # this thread claimed it. Stop processing the job. There's
-            # no need to abort the job since no processing of the job
-            # has occurred.
-        except Exception as error:
-            self.log.exception(error)
-            self._abort_chat_persist_job(job_id)
 
+        persister = ChatPersister(self.db_session_factory, job_id)
+        persister.persist()
 
-    def _start_chat_persist_job(self, job_id, session=None):
-        """Start ChatPersistJob.
-
-        Mark the current job record as started, by updating the start
-        field with the current timestamp.
-        """
-
-        self.log.info("Starting chat persist job with job_id=%d ..." % job_id)
-
-        session = session or self.create_db_session()
-        # This query.update generates the following sql:
-        # UPDATE chat_persist_job SET owner='persistsvc' WHERE
-        # chat_persist_job.id = 1 AND chat_persist_job.owner IS NULL
-        num_rows_updated = session.query(ChatPersistJob).\
-            filter(ChatPersistJob.id==job_id).\
-            filter(ChatPersistJob.owner==None).\
-            update({
-                ChatPersistJob.owner: 'persistsvc',
-                ChatPersistJob.start: tz.utcnow()
-            })
-
-        if (not num_rows_updated):
-            raise DuplicatePersistJobException(message="Chat persist job with job_id=%d already claimed. Stopping processing." % job_id)
-
-        session.commit()
-
-    def _end_chat_persist_job(self, job_id, session=None):
-        """End ChatPersistJob.
-        
-        Mark the current job as finished by updating the end
-        field with the current time.
-        """
-        self.log.info("Ending chat persist job with job_id=%d ..." % job_id)
-        session = session or self.create_db_session()
-        job = session.query(ChatPersistJob).filter(ChatPersistJob.id==job_id).one()
-        job.end = func.current_timestamp()
-        session.commit()
-
-    def _abort_chat_persist_job(self, job_id, session=None):
-        """Abort ChatPersitJob.
-
-        Abort the current persist job. Reset the start column and
-        owner columns to NULL.
-        """
-        self.log.error("Aborting chat persist job with job_id=%d ..." % job_id)
-        session = session or self.create_db_session()
-        job = session.query(ChatPersistJob).filter(ChatPersistJob.id==job_id).one()
-        job.start = None
-        job.owner = None
-        session.commit()
-
-    def _create_chat_entities(self, job_id, session=None):
-        """Create chat tags and chat minutes.
-
-        Given a work item (job_id), this method will create the necessary
-        chat tags and minutes for the chat based on the existing chat messages
-        that were created by the chat service.
-        """
-        try:
-            self.log.info("Starting processing of persist job with job_id=%d" % job_id)
-
-            db_session = session or self.create_db_session()
-
-            # Retrieve the chat session id
-            job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==job_id).one()
-            chat_session_id = job.chat_session.id
-
-            # Find all chat minute messages and store them in the db
-            self._persist_chat_minutes(db_session, chat_session_id)
-
-            # Find all speaking marker messages and store them in the db
-            self._persist_chat_speaking_markers(db_session, chat_session_id)
-
-            # Find all tag messages and store them in the db
-            # self._persist_chat_tags(db_session, chat_session_id)
-
-            # commit all db changes
-            db_session.commit()
-
-        except Exception:
-            db_session.rollback()
-            raise
-
-    def _persist_chat_minutes(self, db_session, chat_session_id):
-        """ Read all chat messages, pull out the chat minute messages,
-            and store them in the db.
-        """
-
-        # Retrieve all Minute messages
-        message_type = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MINUTE_UPDATE').one()
-        chat_minute_messages = db_session.query(ChatMessage).\
-            filter(ChatMessage.chat_session_id == chat_session_id).\
-            filter(ChatMessage.type_id == message_type.id).\
-            order_by(ChatMessage.timestamp).\
-            all()
-
-        self.log.info("Found %d messages of type 'Minute' for chat_session_id=%d" % (len(chat_minute_messages), chat_session_id))
-
-        # Messages are guaranteed to be unique due to the message_id attribute that each
-        # message possesses.  This means we can avoid a duplicate message check here.
-
-        # Create chat minute objects from chat messages
-        for message in chat_minute_messages:
-            # deserialize data blob of message
-            minute_start = datetime.datetime.now() # from data blob
-            minute_end = datetime.datetime.now() # from data blob
-            chat_minute = ChatMinute(
-                chat_session_id=chat_session_id,
-                start=minute_start,
-                end=minute_end)
-            db_session.add(chat_minute)
-
-    def _persist_chat_speaking_markers(self, db_session, chat_session_id):
-        """ Read all chat messages, find the speaking marker messages,
-            and store them in the db.
-        """
-
-        # Retrieve all speaking marker messages
-        message_type = db_session.query(ChatMessageType).\
-            filter(ChatMessageType.name=='MARKER_CREATE').\
-            one()
-        chat_marker_messages = db_session.query(ChatMessage).\
-            filter(ChatMessage.chat_session_id == chat_session_id).\
-            filter(ChatMessage.type_id == message_type.id).\
-            order_by(ChatMessage.timestamp).\
-            all()
-
-        self.log.info("Found %d message of type 'Marker' for chat_session_id=%d" % (len(chat_marker_messages), chat_session_id))
-
-        # Create chat marker objects from chat messages
-        for message in chat_marker_messages:
-            # deserialize data blob of message
-            # whittle down markers to only chat_speaking markers
-            # Apply biz rules / validation to remove any unneeded markers
-
-            # Pull out needed chat message data from data blob
-            user = 'userID' # from data blob
-            speaking_start = datetime.datetime.now() # from data blob
-            speaking_end = datetime.datetime.now() # from data blob
-
-            # Determine which chat minute the marker message occurred within
-            # TODO need to understand semantics of db_session as to how this query will work
-            chat_minute = db_session.query(ChatMinute).\
-                filter(ChatMinute.start<= speaking_start).\
-                filter(ChatMinute.end>=speaking_end).\
-                one()
-
-            # Create ChatSpeakingMarker object and add to db
-            chat_speaking_marker = ChatSpeaking(
-                user_id=user,
-                chat_minute_id=chat_minute.id,
-                start=speaking_start,
-                end=speaking_end)
-            db_session.add(chat_speaking_marker)
-
-    def _persist_chat_tags(self, db_session, chat_session_id):
-        """ Read all chat messages, find tag messages,
-            and store them in the db.
-        """
-        # Retrieve all chat tag messages
-        message_type = db_session.query(ChatMessageType).filter(ChatMessageType.name=='TAG_CREATE').one()
-        chat_tag_messages = db_session.query(ChatMessage).\
-            filter(ChatMessage.chat_session == chat_session_id).\
-            filter(ChatMessage.type == message_type.id).\
-            order_by(ChatMessage.timestamp).\
-            all()
-
-        self.log.info("Found %d messages of type 'Tag' for chat_session_id=%d" % (len(chat_tag_messages), chat_session_id))
-
-        # Iterate through messages, filtering using biz rules
-        filtered_chat_tag_messages = self._filter_chat_tags(chat_tag_messages, chat_minute_messages)
-
-        # Create chatTags entries in db
-        for message in filtered_chat_tag_messages:
-            self.log.info("Persisting tag messages")
-
-            # Pull out needed chat message data from data blob
-            user = 'userID' # from data blob
-            name = 'name' # from data blob
-            timestamp = 'time of message' # from data blob
-
-            # Determine if this tag exists in our inventory of tags
-            tag_ref = db_session.query(ChatTag).\
-                filter(ChatTag.name== name)
-
-            # Determine which chat minute the marker message occurred within
-            # TODO need to understand semantics of db_session as to how this query will work
-            chat_minute = db_session.query(ChatMinute).\
-                filter(ChatMinute.start<= timestamp).\
-                filter(ChatMinute.end>=timestamp).\
-                one()
-
-            # Create ChatSpeakingMarker object and add to db
-            chat_tag = ChatTag(
-                user_id=user,
-                chat_minute_id=chat_minute.id,
-                tag=tag_ref.id,
-                name=name)
-            db_session.add(chat_tag)
-
-
-
-    def _filter_chat_tags(self, chat_tag_messages, chat_minute_messages):
-        """Apply business rules to filter down which chat messages will be persisted.
-
-        Given a collection of chat messages associated with a chat, this method will
-        filter the messages down to only those we want to persist.
-
-        Removes duplicate tags that occur within the same chat minute.
-        Removes tags that were added and then deleted within the same chat minute.
-        """
-        for message in chat_tag_messages:
-            self.log.info("Filtering chat messages based upon business rules")
-
-        return chat_messages
-
-
-
-
-class ChatPersister(object):
-    """Chat Persister creates and delegates work items to the ChatPersisterThreadPool.
+class ChatPersistJobMonitor(object):
+    """
+    ChatPersistJobMonitor monitors for new chat persist jobs, and delegates
+     work items to the ChatPersisterThreadPool.
     """
     def __init__(self, num_threads, db_session_factory, poll_seconds=60):
         """Constructor.
@@ -305,7 +295,7 @@ class ChatPersister(object):
         self.log = logging.getLogger(__name__)
         self.num_threads = num_threads
         self.db_session_factory = db_session_factory
-        self.poll_seconds = poll_seconds #TODO remove
+        self.poll_seconds = poll_seconds
         self.monitorThread = threading.Thread(target=self.run)
         self.threadpool = ChatPersisterThreadPool(num_threads, db_session_factory)
 
@@ -335,7 +325,7 @@ class ChatPersister(object):
 
         while self.running:
             try:
-                self.log.info("ChatPersister is checking for new jobs to process...")
+                self.log.info("ChatPersistJobMonitor is checking for new jobs to process...")
 
                 #Look for ChatPersistJobs with no owner.
                 #This indicates a job which
