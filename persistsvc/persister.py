@@ -17,6 +17,8 @@ from trsvcscore.models import Chat, ChatRegistration, \
 
 from cache import ChatMessageCache
 from mapper import ChatMessageMapper
+from message_handler import ChatMessageHandler
+
 import settings
 
 class DuplicatePersistJobException(Exception):
@@ -64,7 +66,7 @@ class ChatPersister(object):
             self._start_chat_persist_job()
 
             db_session = self.create_db_session()
-            self._persist_chat_data(db_session)
+            self._persist_that_shit(db_session)
 
             self._end_chat_persist_job()
         except DuplicatePersistJobException as warning:
@@ -116,7 +118,7 @@ class ChatPersister(object):
         job.end = func.current_timestamp()
         db_session.commit()
 
-    def _abort_chat_persist_job(self, db_session):
+    def _abort_chat_persist_job(self):
         """Abort the ChatPersistJob.
 
         Abort the current persist job. Reset the start column and
@@ -128,6 +130,50 @@ class ChatPersister(object):
         job.start = None
         job.owner = None
         db_session.commit()
+        # TODO: Monitor thread is stopping after abort is called.
+        # TODO: What happens if this function throws?
+
+    def _persist_that_shit(self, db_session):
+        """Create chat tags and chat minutes.
+
+        This method will create the necessary chat tags and
+        minutes for the chat based on the existing chat messages
+        that were created by the chat service.
+        """
+        try:
+            self.log.info("Starting processing of persist job with job_id=%d" % self.job_id)
+
+            # Retrieve the chat session id
+            job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
+            self.chat_session_id = job.chat_session.id
+
+            # Read all chat messages that were stored by the chat svc.
+            # It's important that the messages be consumed in chronological
+            # order so that ordering dependencies between messages can be
+            # properly handled. (e.g. a ChatTag referencing a ChatMinute)
+            chat_messages = db_session.query(ChatMessage).\
+                filter(ChatMessage.chat_session_id == self.chat_session_id).\
+                order_by(ChatMessage.timestamp).\
+                all()
+
+            self.log.info("Persist job_id=%d found %d messages to process for chat_session_id=%d" %
+                          (self.job_id, len(chat_messages), self.chat_session_id))
+
+            handler = ChatMessageHandler(db_session)
+            for message in chat_messages:
+                handler.process(message)
+
+            # commit all db changes
+            db_session.commit()
+
+        except Exception:
+            db_session.rollback()
+            raise
+
+
+
+
+
 
     def _persist_chat_data(self, db_session):
         """Create chat tags and chat minutes.
