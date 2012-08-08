@@ -7,7 +7,10 @@ from trsvcscore.models import ChatMinute, ChatSpeakingMarker,\
 
 class ChatMessageHandler(object):
     """
-        Handler responsible for:
+        Handler to process chat messages and persist the associated
+        message data.
+
+        This handler is responsible for:
             1) Filtering out messages that don't need to be persisted
             2) Creating model instances from chat messages
             3) Persisting model instances
@@ -17,16 +20,16 @@ class ChatMessageHandler(object):
         self.db_session = db_session
 
         # Retrieve chat message type IDs
-        self.CHAT_MARKER_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MARKER_CREATE').one().id
-        self.CHAT_MINUTE_CREATE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MINUTE_CREATE').one().id
-        self.CHAT_MINUTE_UPDATE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MINUTE_UPDATE').one().id
-        self.CHAT_TAG_CREATE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='TAG_CREATE').one().id
-        self.CHAT_TAG_DELETE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='TAG_DELETE').one().id
+        self.MARKER_CREATE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MARKER_CREATE').one().id
+        self.MINUTE_CREATE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MINUTE_CREATE').one().id
+        self.MINUTE_UPDATE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MINUTE_UPDATE').one().id
+        self.TAG_CREATE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='TAG_CREATE').one().id
+        self.TAG_DELETE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='TAG_DELETE').one().id
 
         # Create handlers for each type of message we need to persist
         self.chat_marker_handler = ChatMarkerHandler()
         self.chat_minute_handler = ChatMinuteHandler()
-        #self.chat_tag_handler = ChatTagHandler()
+        self.chat_tag_handler = ChatTagHandler()
 
         # Initialize vars that maintain chat state
         self.active_chat_minute = None
@@ -41,7 +44,7 @@ class ChatMessageHandler(object):
         """
         ret = None
 
-        if (message.type_id == self.CHAT_MINUTE_CREATE_TYPE):
+        if (message.type_id == self.MINUTE_CREATE_TYPE):
             ret = self.chat_minute_handler.process(message)
             if (ret is not None):
                 self.db_session.add(ret)
@@ -49,30 +52,36 @@ class ChatMessageHandler(object):
                 self.active_chat_minute = ret
                 print 'active chat minute id is %s' % self.active_chat_minute.id
 
-        elif (message.type_id == self.CHAT_MINUTE_UPDATE_TYPE):
+        elif (message.type_id == self.MINUTE_UPDATE_TYPE):
             ret = self.chat_minute_handler.process(message)
             if (ret is not None):
                 self.active_chat_minute.end = ret.end
                 self.db_session.add(self.active_chat_minute)
                 self.active_chat_minute = None
+                # The active minute is being set to None to ensure that we catch any messages
+                # that might occur between the end of one chat minute and the start of the
+                # next chat minute.
 
-        elif (message_type.id == self.CHAT_MARKER_TYPE):
+        elif (message_type.id == self.MARKER_CREATE_TYPE):
             ret = self.chat_marker_handler.process(message, self.active_chat_minute.id)
             if (ret is not None):
                 db_session.add(ret)
 
-        #elif (message_type.id == self.chat_tag_create_type.id):
-        #    ret = self.chat_tag_handler.process(message, self.active_chat_minute_id)
+        elif (message_type.id == self.TAG_CREATE_TYPE):
+            ret = self.chat_marker_handler.process(message, self.active_chat_minute.id)
+            if (ret is not None):
+                db_session.add(ret)
 
         return ret
 
 
-class ChatMarkerHandler(object):
+class ChatMinuteHandler(object):
     """
-        Handler for Chat Marker messages
+        Handler for Chat Minute messages
 
         This class creates model instances
-        from chat marker messages.
+        from chat minute messages and persists
+        them to the db.
 
         This class is also responsible for
         defining and applying the business rules to handle
@@ -82,7 +91,7 @@ class ChatMarkerHandler(object):
     def __init__(self):
         self.log = logging.getLogger(__name__)
         self.all_messages = []
-        self.filtered_messages = []
+        self.persisted_messages = []
 
     def get_all_messages(self):
         """
@@ -90,11 +99,81 @@ class ChatMarkerHandler(object):
         """
         return self.all_messages
 
-    def get_filtered_messages(self):
+    def get_persisted_messages(self):
         """
-            Return chat marker messages that pass the biz rules filter.
+            Return chat marker messages that passed the biz rules filter
+            and were persisted to the db
         """
-        return self.filtered_messages
+        return self.persisted_messages
+
+    def process(self, message):
+        """
+            Create model instance
+
+            Returns None if creation failed.
+            Creation can fail if the input message fails to pass biz rules filter.
+        """
+        ret = None
+        self.all_messages.append(message)
+        if (self._is_valid_message(message)):
+            self.persisted_messages.append(message)
+            ret = self._create_model(message)
+
+        return ret
+
+    def _create_model(self, message):
+        # TODO deserialize data blob of message
+        minute_start = datetime.datetime.now() # from data blob
+        minute_end = message.time # from data blob
+
+        chat_minute = ChatMinute(
+            chat_session_id=message.chat_session_id,
+            start=minute_start,
+            end=minute_end)
+
+        return chat_minute
+
+    def _is_valid_message(self, message):
+        """
+            Returns True if message should be persisted, returns False otherwise.
+        """
+        ret = False
+        # Apply Biz Rules here
+        # Messages are guaranteed to be unique due to the message_id attribute that each
+        # message possesses.  This means we can avoid a duplicate message check here.
+        ret = True
+        return ret
+
+class ChatMarkerHandler(object):
+    """
+        Handler for Chat Marker messages
+
+        This class creates model instances
+        from chat marker messages and persists
+        them to the db.
+
+        This class is also responsible for
+        defining and applying the business rules to handle
+        duplicate messages and filtering unwanted messages.
+        """
+
+    def __init__(self):
+        self.log = logging.getLogger(__name__)
+        self.all_messages = []
+        self.persisted_messages = []
+
+    def get_all_messages(self):
+        """
+            Return all chat marker messages.
+        """
+        return self.all_messages
+
+    def get_persisted_messages(self):
+        """
+            Return chat marker messages that passed the biz rules filter
+            and were persisted to the db.
+        """
+        return self.persisted_messages
 
     def process(self, message, chat_minute_id):
         """
@@ -106,13 +185,13 @@ class ChatMarkerHandler(object):
         ret = None
         self.all_messages.append(message)
         if (self._is_valid_message(message)):
-            self.filtered_messages.append(message)
+            self.persisted_messages.append(message)
             ret = self._create_model(message, chat_minute_id)
 
         return ret
 
     def _create_model(self, message, chat_minute_id):
-        # deserialize data blob of message
+        # TODO deserialize data blob of message
 
         # Pull out needed chat message data from data blob
         user = 'userID' # from data blob
@@ -130,9 +209,6 @@ class ChatMarkerHandler(object):
 
     def _is_valid_message(self, message):
         """
-            Given a collection of chat messages associated with a chat, this method will
-            filter the messages down to only those we want to persist.
-
             Returns True if message should be persisted, returns False otherwise.
         """
         ret = False
@@ -142,12 +218,13 @@ class ChatMarkerHandler(object):
         ret = True
         return ret
 
-class ChatMinuteHandler(object):
+class ChatTagHandler(object):
     """
-        Handler for Chat Minute messages
+        Handler for Chat Tag messages
 
         This class creates model instances
-        from chat minute messages.
+        from chat minute messages and persists
+        them to the db.
 
         This class is also responsible for
         defining and applying the business rules to handle
@@ -157,7 +234,7 @@ class ChatMinuteHandler(object):
     def __init__(self):
         self.log = logging.getLogger(__name__)
         self.all_messages = []
-        self.filtered_messages = []
+        self.persisted_messages = []
 
     def get_all_messages(self):
         """
@@ -165,13 +242,14 @@ class ChatMinuteHandler(object):
         """
         return self.all_messages
 
-    def get_filtered_messages(self):
+    def get_persisted_messages(self):
         """
-            Return chat marker messages that pass the biz rules filter.
+            Return chat marker messages that passed the biz rules filter
+            and were persisted to the db.
         """
-        return self.filtered_messages
+        return self.persisted_messages
 
-    def process(self, message):
+    def process(self, message, chat_minute_id):
         """
             Create model instance
 
@@ -181,28 +259,34 @@ class ChatMinuteHandler(object):
         ret = None
         self.all_messages.append(message)
         if (self._is_valid_message(message)):
-            self.filtered_messages.append(message)
-            ret = self._create_model(message)
+            self.persisted_messages.append(message)
+            ret = self._create_model(message, chat_minute_id)
 
         return ret
 
-    def _create_model(self, message):
-        # deserialize data blob of message
-        minute_start = datetime.datetime.now() # from data blob
-        minute_end = message.time # from data blob
+    def _create_model(self, message, chat_minute_id):
 
-        chat_minute = ChatMinute(
-            chat_session_id=message.chat_session_id,
-            start=minute_start,
-            end=minute_end)
+        # Pull out needed chat message data from data blob
+        user = 'userID' # from data blob
+        name = 'name' # from data blob
+        timestamp = 'time of message' # from data blob
 
-        return chat_minute
+        # Determine if this tag exists in our inventory of tags
+        tag = db_session.query(ChatTag).\
+            filter(ChatTag.name==name)
+        tag_id = (tag.id if tag else None)
+
+        # Create ChatSpeakingMarker object and add to db
+        chat_tag = ChatTag(
+            user_id=user,
+            chat_minute_id=chat_minute.id,
+            tag=tag_id,
+            name=name)
+
+        return chat_tag
 
     def _is_valid_message(self, message):
         """
-            Given a collection of chat messages associated with a chat, this method will
-            filter the messages down to only those we want to persist.
-
             Returns True if message should be persisted, returns False otherwise.
         """
         ret = False
