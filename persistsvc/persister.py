@@ -134,15 +134,13 @@ class ChatPersister(object):
         # TODO: What happens if this function throws?
 
     def _persist_data(self, db_session):
-        """Create chat tags and chat minutes.
+        """Persist chat data to the db
 
-        This method will create the necessary chat tags and
-        minutes for the chat based on the existing chat messages
+        This method will create the necessary chat minutes, tags,
+        and other entities for the chat based on the chat messages
         that were created by the chat service.
         """
         try:
-            self.log.info("Starting processing of persist job with job_id=%d" % self.job_id)
-
             # Retrieve the chat session id
             job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
             self.chat_session_id = job.chat_session.id
@@ -150,7 +148,8 @@ class ChatPersister(object):
             # Read all chat messages that were stored by the chat svc.
             # It's important that the messages be consumed in chronological
             # order so that ordering dependencies between messages can be
-            # properly handled. (e.g. a ChatTag referencing a ChatMinute)
+            # properly handled.
+            # (e.g. ChatTags needing a reference to a ChatMinute)
             chat_messages = db_session.query(ChatMessage).\
                 filter(ChatMessage.chat_session_id == self.chat_session_id).\
                 order_by(ChatMessage.timestamp).\

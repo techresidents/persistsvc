@@ -31,8 +31,6 @@ class ChatMessageHandler(object):
         self.chat_minute_handler = ChatMinuteHandler()
         self.chat_tag_handler = ChatTagHandler()
 
-        # Initialize vars that maintain chat state
-        self.active_chat_minute = None
 
     def process(self, message):
         """
@@ -41,37 +39,39 @@ class ChatMessageHandler(object):
 
             This method is the orchestrator of persisting all the chat entities
             that need to be stored.  It's assumed that messages that are input
-            are in chronological order. This is satisfy any ordering dependencies
+            are in chronological order. This is to satisfy any ordering dependencies
             that may exist between the chat messages.
         """
         ret = None
 
         if (message.type_id == self.MINUTE_CREATE_TYPE):
-            ret = self.chat_minute_handler.process(message)
+            ret = self.chat_minute_handler.create_model(message)
             if (ret is not None):
                 self.db_session.add(ret)
-                self.db_session.flush() # flush so that the chat minute gets an ID
-                self.active_chat_minute = ret
-                self.log.debug('Persisting new chat minute. The active chat minute id '
-                               'is now %s' % self.active_chat_minute.id)
+                self.db_session.flush() # force a flush so that the chat minute object gets an ID
+                self.chat_minute_handler.set_active_minute(ret)
 
         elif (message.type_id == self.MINUTE_UPDATE_TYPE):
-            ret = self.chat_minute_handler.process(message)
+            ret = self.chat_minute_handler.update_model(message)
             if (ret is not None):
-                self.active_chat_minute.end = ret.end
-                self.db_session.add(self.active_chat_minute)
-                self.active_chat_minute = None
-                # The active minute is being set to None to ensure that we catch any messages
-                # that might occur between the end of one chat minute and the start of the
-                # next chat minute.
+                self.db_session.add(ret)
 
         elif (message_type.id == self.MARKER_CREATE_TYPE):
-            ret = self.chat_marker_handler.process(message, self.active_chat_minute.id)
+            ret = self.chat_marker_handler.create_model(
+                message,
+                self.chat_minute_handler.get_active_minute())
             if (ret is not None):
                 db_session.add(ret)
 
         elif (message_type.id == self.TAG_CREATE_TYPE):
-            ret = self.chat_marker_handler.process(message, self.active_chat_minute.id)
+            ret = self.chat_tag_handler.create_model(
+                message,
+                self.chat_minute_handler.get_active_minute())
+            if (ret is not None):
+                db_session.add(ret)
+
+        elif (message_type.id == self.TAG_DELETE_TYPE):
+            ret = self.chat_tag_handler.update_model(message)
             if (ret is not None):
                 db_session.add(ret)
 
@@ -89,27 +89,28 @@ class ChatMinuteHandler(object):
         This class is also responsible for
         defining and applying the business rules to handle
         duplicate messages and filtering any unwanted messages.
+
+        This class also maintains the active chat minute.
         """
 
     def __init__(self):
         self.log = logging.getLogger(__name__)
-        self.all_messages = []
-        self.persisted_messages = []
+        self.active_minute = None
+        self.all_minutes = {}
 
-    def get_all_messages(self):
-        """
-            Return all chat marker messages.
-        """
-        return self.all_messages
+    def set_active_minute(self, chat_minute):
+        self.active_minute = chat_minute
+        self.log.debug('The new active chat minute id=%s' % self.active_minute.id)
 
-    def get_persisted_messages(self):
-        """
-            Return chat marker messages that passed the biz rules filter
-            and were persisted to the db
-        """
-        return self.persisted_messages
+    def get_active_minute(self):
+        return self.active_minute
 
-    def process(self, message):
+    def _decode_message_data(self, message):
+        # read message format type
+        # parse message data and fill in data structure
+        return None
+
+    def create_model(self, message):
         """
             Create model instance
 
@@ -117,34 +118,85 @@ class ChatMinuteHandler(object):
             Creation can fail if the input message fails to pass biz rules filter.
         """
         ret = None
-        self.all_messages.append(message)
-        if (self._is_valid_message(message)):
-            self.persisted_messages.append(message)
-            ret = self._create_model(message)
+
+        # Decode chat message data blob
+        message_data = _decode_message_data(message)
+
+        # Create model from message
+        if (self._is_valid_create_message(message, message_data)):
+            minute_start = datetime.datetime.now() # from data blob
+            minute_end = message.time # from data blob
+            ret = ChatMinute(
+                chat_session_id=message.chat_session_id,
+                start=minute_start,
+                end=minute_end)
+            self.active_minute = ret
+
+        # Store message and its data for easy reference,
+        # (specifically for minuteID look-ups on minute-update messages)
+        minute_data = JobData(message_data.minuteId, message, message_data, ret)
+        self.all_minutes[minute_data.id] = minute_data
 
         return ret
 
-    def _create_model(self, message):
-        # TODO deserialize data blob of message
-        minute_start = datetime.datetime.now() # from data blob
-        minute_end = message.time # from data blob
+    def update_model(self, message):
+        """
+            Update model instance
 
-        chat_minute = ChatMinute(
-            chat_session_id=message.chat_session_id,
-            start=minute_start,
-            end=minute_end)
+            Handles marking the end time of a chat minute model.
+            Returns the updated model instance.
+            Returns None if message is invalid.
+        """
+        ret = None
 
-        return chat_minute
+        # Decode chat message data blob
+        message_data = _decode_message_data(message)
 
-    def _is_valid_message(self, message):
+        if (self._is_valid_update_message(message, message_data)):
+            minute_data = self.all_minutes[message_data.minuteId]
+            minute_model = minute_data.get_model()
+            minute.model.end = message_data.endTimestamp
+            ret = minute_model
+            # The active minute is being set to None to ensure that we catch any messages
+            # that might occur between the end of one chat minute and the start of the
+            # next chat minute.
+            self.active_minute = None
+
+        # Overwrite existing chat minute data with the newly updated data
+        minute_data = JobData(message_data.minuteId, message, message_data, ret)
+        self.all_minutes[minute_data.id] = minute_data
+
+        return ret
+
+    def _is_valid_create_message(self, message, message_data):
         """
             Returns True if message should be persisted, returns False otherwise.
         """
         ret = False
-        # Apply Biz Rules here
-        # Messages are guaranteed to be unique due to the message_id attribute that each
-        # message possesses.  This means we can avoid a duplicate message check here.
+
+        # Chat messages are guaranteed to be unique due to the message_id attribute that each
+        # message possesses.  This means we can avoid a duplicate message ID check here.
+
+        # TODO add timestamp check to ensure it doesn't precede the previous minute?
         ret = True
+        return ret
+
+    def _is_valid_update_message(self, message, message_data):
+        """
+            Returns True if message should be persisted, returns False otherwise.
+        """
+        ret = False
+
+        if (message_data.minuteId in self.all_minutes):
+            minute_data = self.all_minutes[message_data.minuteId]
+            minute_model = minute_data.get_model()
+            # if minuteID has an associated model, then we tried to persist the message
+            if (minute_model is not None):
+                # Since we process messages chronologically, ensure that the referenced minuteID
+                # is also the active chat minute
+                if(minute_model == self.active_minute):
+                    ret = True
+
         return ret
 
 class ChatMarkerHandler(object):
@@ -162,23 +214,14 @@ class ChatMarkerHandler(object):
 
     def __init__(self):
         self.log = logging.getLogger(__name__)
-        self.all_messages = []
-        self.persisted_messages = []
+        self.all_markers = {}
 
-    def get_all_messages(self):
-        """
-            Return all chat marker messages.
-        """
-        return self.all_messages
+    def _decode_message_data(self, message):
+        # read message format type
+        # parse message data and fill in data structure
+        return None
 
-    def get_persisted_messages(self):
-        """
-            Return chat marker messages that passed the biz rules filter
-            and were persisted to the db.
-        """
-        return self.persisted_messages
-
-    def process(self, message, chat_minute_id):
+    def create_model(self, message, chat_minute_id):
         """
             Create model instance
 
@@ -186,38 +229,38 @@ class ChatMarkerHandler(object):
             Creation can fail if the input message fails to pass biz rules filter.
         """
         ret = None
-        self.all_messages.append(message)
-        if (self._is_valid_message(message)):
-            self.persisted_messages.append(message)
-            ret = self._create_model(message, chat_minute_id)
+
+        # Decode chat message data blob
+        message_data = _decode_message_data(message)
+
+        if (self._is_valid_message(message, message_data)):
+
+            # Only expecting & handling speaking markers for now
+
+            # Create ChatSpeakingMarker object
+            ret = ChatSpeakingMarker(
+                user_id=message_data.userId,
+                chat_minute_id=chat_minute_id,
+                start=message_data.speakingStart,
+                end=message_data.speakingEnd)
+
+        # Store message and its data for easy reference
+        marker_data = JobData(message_data.markerId, message, message_data, ret)
+        self.all_markers[marker_data.id] = marker_data
 
         return ret
 
-    def _create_model(self, message, chat_minute_id):
-        # TODO deserialize data blob of message
-
-        # Pull out needed chat message data from data blob
-        user = 'userID' # from data blob
-        speaking_start = datetime.datetime.now() # from data blob
-        speaking_end = datetime.datetime.now() # from data blob
-
-        # Create ChatSpeakingMarker object and add to db
-        chat_speaking_marker = ChatSpeakingMarker(
-            user_id=user,
-            chat_minute_id=chat_minute_id,
-            start=speaking_start,
-            end=speaking_end)
-
-        return chat_speaking_marker
-
-    def _is_valid_message(self, message):
+    def _is_valid_message(self, message, message_data):
         """
             Returns True if message should be persisted, returns False otherwise.
         """
         ret = False
-        # Apply Biz Rules here
-        # Messages are guaranteed to be unique due to the message_id attribute that each
-        # message possesses.  This means we can avoid a duplicate message check here.
+
+        # Chat messages are guaranteed to be unique due to the message_id attribute that each
+        # message possesses.  This means we can avoid a duplicate message ID check here.
+
+        #TODO only pass chat speaking markers
+
         ret = True
         return ret
 
@@ -236,23 +279,14 @@ class ChatTagHandler(object):
 
     def __init__(self):
         self.log = logging.getLogger(__name__)
-        self.all_messages = []
-        self.persisted_messages = []
+        self.all_tags = {}
 
-    def get_all_messages(self):
-        """
-            Return all chat marker messages.
-        """
-        return self.all_messages
+    def _decode_message_data(self, message):
+        # read message format type
+        # parse message data and fill in data structure
+        return None
 
-    def get_persisted_messages(self):
-        """
-            Return chat marker messages that passed the biz rules filter
-            and were persisted to the db.
-        """
-        return self.persisted_messages
-
-    def process(self, message, chat_minute_id):
+    def create_model(self, message, chat_minute_id):
         """
             Create model instance
 
@@ -260,41 +294,124 @@ class ChatTagHandler(object):
             Creation can fail if the input message fails to pass biz rules filter.
         """
         ret = None
-        self.all_messages.append(message)
-        if (self._is_valid_message(message)):
-            self.persisted_messages.append(message)
-            ret = self._create_model(message, chat_minute_id)
+
+        # Decode chat message data blob
+        message_data = _decode_message_data(message)
+
+        # Create the model from the message
+        if (self._is_valid_create_tag_message(message, message_data)):
+            user = 'userID' # from data blob
+            name = 'name' # from data blob
+            tag_ref_id = '1' # from data blob
+            ret = ChatTag(
+                user_id=user,
+                chat_minute_id=chat_minute_id,
+                tag=tag_ref_id,
+                name=name)
+
+        # Store message and its data for easy reference,
+        # (specifically for tagID look-ups on tag delete messages)
+        tag_data = JobData(message_data.tagId, message, message_data, ret)
+        self.all_tags[tag_data.tag_id] = tag_data
 
         return ret
 
-    def _create_model(self, message, chat_minute_id):
+    def update_model(self, message):
+        """
+            Update model instance.
 
-        # Pull out needed chat message data from data blob
-        user = 'userID' # from data blob
-        name = 'name' # from data blob
-        timestamp = 'time of message' # from data blob
+            Handles marking a chat tag model for delete.
+            Returns the updated model instance.
+            Returns None if message is invalid.
+        """
+        ret = None
 
-        # Determine if this tag exists in our inventory of tags
-        tag = db_session.query(ChatTag).\
-            filter(ChatTag.name==name)
-        tag_id = (tag.id if tag else None)
+        # Decode chat message data blob
+        message_data = _decode_message_data(message)
 
-        # Create ChatSpeakingMarker object and add to db
-        chat_tag = ChatTag(
-            user_id=user,
-            chat_minute_id=chat_minute.id,
-            tag=tag_id,
-            name=name)
+        # Update model
+        if (self._is_valid_delete_tag_message(message, message_data)):
+            tag_data = self.all_tags[message_data.tagId]
+            tag_model = tag_data.get_tag_model()
+            if (tag_model is not None):
+                # implies the tag-create msg was valid and persisted
+                tag_model.deleted = True
+            ret = tag_model
 
-        return chat_tag
+        # Update state
+        # This will overwrite the message data associated with the tag create message
+        tag_data = JobData(message_data.tagId, message, message_data, ret)
+        self.all_tags[message_data.tagId] = tag_data
 
-    def _is_valid_message(self, message):
+        return ret
+
+    def _is_valid_create_tag_message(self, message, message_data):
         """
             Returns True if message should be persisted, returns False otherwise.
         """
         ret = False
-        # Apply Biz Rules here
-        # Messages are guaranteed to be unique due to the message_id attribute that each
-        # message possesses.  This means we can avoid a duplicate message check here.
+
+        # Chat messages are guaranteed to be unique due to the message_id attribute that each
+        # chat message possesses.  This means we can avoid a duplicate messageID check here.
+
+        # Check for duplicate tagID to prevent overwriting existing tag data
+        if (message_data.tagId in self.all_tags):
+            self.log.warning('Chat message to create tag with duplicate tagID=%s' % message_data.tagId)
+            return ret
+
+        # Prevent adding the same tag within the same chat minute
+
+
         ret = True
         return ret
+
+    def _is_valid_delete_tag_message(self, message, message_data):
+        """
+            Returns True if message should be persisted, returns False otherwise.
+        """
+        ret = False
+
+        if (message_data.tagId in self.all_tags):
+            tag_data = self.all_tags[message_data.tagId]
+            tag_model = tag_data.get_model()
+            # if tagID has an associated model, then we tried to persist the message
+            if (tag_model is not None):
+                # Ensure that the model hasn't already been marked for delete
+                if (tag_model.deleted == False):
+                    ret = True
+
+        return ret
+
+
+
+class JobData(object):
+    """
+        Data structure to maintain references to a chat message's
+        associated message, decoded message data, and model.
+
+        The id parameter represents a tagId, minuteId, or markerId.
+        This data is included in the chat message data blob.
+    """
+    def __init__(self, id, message, message_data, model=None):
+        self.id = id
+        self.message = message
+        self.message_data = message_data
+        self.model = model
+
+    def set_message(self, message):
+        self.message = message
+
+    def get_message(self):
+        return self.message
+
+    def set_message_data(self, message_data):
+        self.message_data = message_data
+
+    def get_message_data(self):
+        return self.message_data
+
+    def set_model(self, tag_model):
+        self.model = tag_model
+
+    def get_model(self):
+        return self.model
