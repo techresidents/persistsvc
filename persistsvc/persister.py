@@ -66,7 +66,7 @@ class ChatPersister(object):
             self._start_chat_persist_job()
 
             db_session = self.create_db_session()
-            self._persist_that_shit(db_session)
+            self._persist_data(db_session)
 
             self._end_chat_persist_job()
         except DuplicatePersistJobException as warning:
@@ -133,7 +133,7 @@ class ChatPersister(object):
         # TODO: Monitor thread is stopping after abort is called.
         # TODO: What happens if this function throws?
 
-    def _persist_that_shit(self, db_session):
+    def _persist_data(self, db_session):
         """Create chat tags and chat minutes.
 
         This method will create the necessary chat tags and
@@ -169,132 +169,6 @@ class ChatPersister(object):
         except Exception:
             db_session.rollback()
             raise
-
-
-
-
-
-
-    def _persist_chat_data(self, db_session):
-        """Create chat tags and chat minutes.
-
-        This method will create the necessary chat tags and
-        minutes for the chat based on the existing chat messages
-        that were created by the chat service.
-        """
-        try:
-            self.log.info("Starting processing of persist job with job_id=%d" % self.job_id)
-
-            # Retrieve the chat session id
-            job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
-            self.chat_session_id = job.chat_session.id
-
-            # Cache all chat messages
-            self._cache_chat_messages(db_session)
-
-            # Find all chat minute messages and store them in the db
-            # This data has to be processed first so that we can assign other data
-            # to its associated chat minute.
-            #self._persist_chat_minutes(db_session)
-
-            # Find all speaking marker messages and store them in the db
-            # self._persist_chat_speaking_markers(chat_session_id)
-
-            # Find all tag messages and store them in the db
-            # self._persist_chat_tags(db_session, chat_session_id)
-
-            # commit all db changes
-            db_session.commit()
-
-        except Exception:
-            db_session.rollback()
-            raise
-
-    def _cache_chat_messages(self, db_session):
-        """
-            Cache chat messages.
-
-            Private method to cache chat messages so that the chat
-            persist service can access this data without having to
-            hit the database.
-        """
-
-        # Set message type IDs within cache so that the
-        # cache can sort messages by type
-        chat_marker_type = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MARKER_CREATE').one()
-        chat_minute_type = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MINUTE_UPDATE').one()
-        chat_tag_type = db_session.query(ChatMessageType).filter(ChatMessageType.name=='TAG_CREATE').one()
-        self.chat_message_cache = ChatMessageCache(
-            chat_marker_type.id,
-            chat_minute_type.id,
-            chat_tag_type.id
-        )
-
-        # Add all chat messages to cache
-        chat_messages = db_session.query(ChatMessage).\
-            filter(ChatMessage.chat_session_id == self.chat_session_id).\
-            order_by(ChatMessage.timestamp).\
-            all()
-
-        for message in chat_messages:
-            self.chat_message_cache.add(message)
-
-    def _persist_chat_minutes(self, db_session):
-        """
-            Creates ChatMinute entries in the db
-
-            Read all chat messages, pull out the chat minute messages,
-            and store them in the db.
-        """
-
-        # Retrieve all Minute messages
-        chat_minute_messages = self.chat_message_cache.get_chat_minutes()
-        self.log.info("Found %d messages of type 'Minute' for chat_session_id=%d" %
-                      (len(chat_minute_messages),
-                       self.chat_session_id))
-
-        # Create chat minute objects from chat messages
-        chat_id_map = {}
-        for message in chat_minute_messages:
-            chat_minute = ChatMessageMapper.chatMessage_to_ChatMinute(message)
-            chat_id_map[message] = chat_minute
-            db_session.add(chat_minute)
-
-        # Explicit flush so that we can reference chat_minute.id
-        db_session.flush()
-
-    def _persist_chat_speaking_markers(self, db_session):
-        """ Read all chat messages, find the speaking marker messages,
-            and store them in the db.
-        """
-
-        #TODO this is not filtering out speaking markers yet
-
-        # Retrieve all speaking marker messages
-        chat_marker_messages = self.chat_message_cache.get_chat_markers()
-        self.log.info("Found %d message of type 'Marker' for chat_session_id=%d" %
-                      (len(chat_marker_messages),
-                       self.chat_session_id))
-
-        # Create chat marker objects from chat messages
-        for message in chat_marker_messages:
-            chat_speaking_marker = ChatMessageMapper.chatMessage_to_ChatSpeakingMarker(
-                message,
-                self.chat_message_cache.get_chat_minutes())
-            db_session.add(chat_speaking_marker)
-
-    def _persist_chat_tags(self, db_session):
-        """ Read all chat messages, find tag messages,
-            and store them in the db.
-        """
-        # Retrieve all chat tag messages
-        chat_tag_messages = self.chat_message_cache.get_chat_tags()
-        self.log.info("Found %d messages of type 'Tag' for chat_session_id=%d" % (len(chat_tag_messages), self.chat_session_id))
-
-        # Create chatTags entries in db
-        for message in filtered_chat_tag_messages:
-            chat_tag = ChatMessageMapper.chatMessage_to_ChatTag(message)
-            db_session.add(chat_tag)
 
 class ChatPersisterThreadPool(ThreadPool):
     """Thread pool used to process chat persist jobs.

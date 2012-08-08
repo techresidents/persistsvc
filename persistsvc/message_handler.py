@@ -37,10 +37,12 @@ class ChatMessageHandler(object):
     def process(self, message):
         """
             Converts input chat message to a model instance based upon the
-            chat message's type and persists the instance to the db.
+            chat message's type and persists the created model instance to the db.
 
             This method is the orchestrator of persisting all the chat entities
-            that need to be stored.
+            that need to be stored.  It's assumed that messages that are input
+            are in chronological order. This is satisfy any ordering dependencies
+            that may exist between the chat messages.
         """
         ret = None
 
@@ -48,9 +50,10 @@ class ChatMessageHandler(object):
             ret = self.chat_minute_handler.process(message)
             if (ret is not None):
                 self.db_session.add(ret)
-                self.db_session.flush()
+                self.db_session.flush() # flush so that the chat minute gets an ID
                 self.active_chat_minute = ret
-                print 'active chat minute id is %s' % self.active_chat_minute.id
+                self.log.debug('Persisting new chat minute. The active chat minute id '
+                               'is now %s' % self.active_chat_minute.id)
 
         elif (message.type_id == self.MINUTE_UPDATE_TYPE):
             ret = self.chat_minute_handler.process(message)
