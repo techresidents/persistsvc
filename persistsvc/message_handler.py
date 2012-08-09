@@ -212,6 +212,8 @@ class ChatMarkerHandler(object):
         duplicate messages and filtering unwanted messages.
         """
 
+    # We will only store speaking markers if the user
+    # was speaking for longer than this threshold value.
     SPEAKING_DURATION_THRESHOLD = 30000 # 30 secs in millis
 
     def __init__(self):
@@ -223,16 +225,6 @@ class ChatMarkerHandler(object):
         # read message format type
         # parse message data and fill in data structure
         return None
-
-    def _calculate_speaking_duration(self, speaking_data):
-        ret = None
-        start = speaking_data.get_start_timestamp()
-        end = speaking_data.get_end_timestamp()
-        if (start is not None and
-            end is not None):
-            ret = end-start
-
-        return ret
 
     def create_model(self, message, chat_minute_id):
         """
@@ -259,7 +251,6 @@ class ChatMarkerHandler(object):
                 user_speaking_data = self.speaking_state[user_id]
 
             # Determine if the speaking minute has ended and we need to persist the marker
-            persist_marker = False
             if (message_data.isSpeaking):
                 # msg indicates user started speaking
                 if (not user_speaking_data.is_speaking()):
@@ -270,22 +261,21 @@ class ChatMarkerHandler(object):
             else:
                 # msg indicates user stopped speaking
                 if (user_speaking_data.is_speaking()):
-                    # If user was speaking, process msg.
+                    # If user was already speaking, process msg.
                     # Ignore duplicate speaking_end markers.
                     user_speaking_data.set_end_timestamp(message.timestamp)
-                    user_speaking_data.set_speaking(False)
-                    # Only persist speaking markers with significant duration
-                    duration = self._calculate_speaking_duration(user_speaking_data)
+                    duration = user_speaking_data.calculate_speaking_duration()
                     if (duration > SPEAKING_DURATION_THRESHOLD):
-                        persist_marker = True
-
-            # Create ChatSpeakingMarker object
-            if (persist_marker):
-                ret = ChatSpeakingMarker(
-                    user_id=user_id,
-                    chat_minute_id=chat_minute_id,
-                    start=user_speaking_data.get_start_timestamp(),
-                    end=user_speaking_data.get_end_timestamp())
+                        # Only persist speaking markers with significant duration
+                        ret = ChatSpeakingMarker(
+                            user_id=user_id,
+                            chat_minute_id=chat_minute_id,
+                            start=user_speaking_data.get_start_timestamp(),
+                            end=user_speaking_data.get_end_timestamp())
+                    # Reset user's speaking state
+                    user_speaking_data.set_start_timestamp(None)
+                    user_speaking_data.set_end_timestamp(None)
+                    user_speaking_data.set_speaking(False)
 
             # Update state
             self.speaking_state[user_id] = user_speaking_data
@@ -470,7 +460,7 @@ class JobData(object):
 
 class SpeakingData(object):
     """
-        Data structure to store chat speaking marker data.
+        Data structure to store chat speaking state.
     """
     def __init__(self, user_id, is_speaking=False, start_timestamp=None, end_timestamp=None):
         self.user_id = user_id
@@ -495,3 +485,10 @@ class SpeakingData(object):
 
     def get_end_timestamp(self):
         return self.end
+
+    def calculate_speaking_duration(self):
+        ret = 0
+        if (self.start is not None and
+            self.end is not None):
+            ret = end-start
+        return ret
