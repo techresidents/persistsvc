@@ -3,7 +3,7 @@ import logging
 import time
 
 from trpycore.zookeeper.client import ZookeeperClient
-from trsvcscore.proxy.zookeeper import ZookeeperServiceProxy
+from trsvcscore.proxy.zoo import ZookeeperServiceProxy
 from tridlcore.gen.ttypes import RequestContext
 from trpersistsvc.gen import TPersistService
 
