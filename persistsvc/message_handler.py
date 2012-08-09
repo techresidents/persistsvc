@@ -212,14 +212,27 @@ class ChatMarkerHandler(object):
         duplicate messages and filtering unwanted messages.
         """
 
+    SPEAKING_DURATION_THRESHOLD = 30000 # 30 secs in millis
+
     def __init__(self):
         self.log = logging.getLogger(__name__)
         self.all_markers = {}
+        self.speaking_state = {}
 
     def _decode_message_data(self, message):
         # read message format type
         # parse message data and fill in data structure
         return None
+
+    def _calculate_speaking_duration(self, speaking_data):
+        ret = None
+        start = speaking_data.get_start_timestamp()
+        end = speaking_data.get_end_timestamp()
+        if (start is not None and
+            end is not None):
+            ret = end-start
+
+        return ret
 
     def create_model(self, message, chat_minute_id):
         """
@@ -237,12 +250,46 @@ class ChatMarkerHandler(object):
 
             # Only expecting & handling speaking markers for now
 
+            # Read userId and get associated speaking state
+            user_id = message_data.userId
+            user_speaking_data = None
+            if (user_id not in self.speaking_state):
+                user_speaking_data = SpeakingData(user_id)
+            else:
+                user_speaking_data = self.speaking_state[user_id]
+
+            # Determine if the speaking minute has ended and we need to persist the marker
+            persist_marker = False
+            if (message_data.isSpeaking):
+                # msg indicates user started speaking
+                if (not user_speaking_data.is_speaking()):
+                    # If user wasn't already speaking, process msg.
+                    # Ignore duplicate speaking_start markers.
+                    user_speaking_data.set_start_timestamp(message.timestamp)
+                    user_speaking_data.set_speaking(True)
+            else:
+                # msg indicates user stopped speaking
+                if (user_speaking_data.is_speaking()):
+                    # If user was speaking, process msg.
+                    # Ignore duplicate speaking_end markers.
+                    user_speaking_data.set_end_timestamp(message.timestamp)
+                    user_speaking_data.set_speaking(False)
+                    # Only persist speaking markers with significant duration
+                    duration = self._calculate_speaking_duration(user_speaking_data)
+                    if (duration > SPEAKING_DURATION_THRESHOLD):
+                        persist_marker = True
+
             # Create ChatSpeakingMarker object
-            ret = ChatSpeakingMarker(
-                user_id=message_data.userId,
-                chat_minute_id=chat_minute_id,
-                start=message_data.speakingStart,
-                end=message_data.speakingEnd)
+            if (persist_marker):
+                ret = ChatSpeakingMarker(
+                    user_id=user_id,
+                    chat_minute_id=chat_minute_id,
+                    start=user_speaking_data.get_start_timestamp(),
+                    end=user_speaking_data.get_end_timestamp())
+
+            # Update state
+            self.speaking_state[user_id] = user_speaking_data
+            persist_marker = False
 
         # Store message and its data for easy reference
         marker_data = JobData(message_data.markerId, message, message_data, ret)
@@ -253,6 +300,8 @@ class ChatMarkerHandler(object):
     def _is_valid_message(self, message, message_data):
         """
             Returns True if message should be persisted, returns False otherwise.
+
+            Only passes speaking markers.
         """
         ret = False
 
@@ -260,6 +309,8 @@ class ChatMarkerHandler(object):
         # message possesses.  This means we can avoid a duplicate message ID check here.
 
         #TODO only pass chat speaking markers
+        # if message_data.marker.type == chat_speaking
+        #   ret = True
 
         ret = True
         return ret
@@ -415,3 +466,32 @@ class JobData(object):
 
     def get_model(self):
         return self.model
+
+
+class SpeakingData(object):
+    """
+        Data structure to store chat speaking marker data.
+    """
+    def __init__(self, user_id, is_speaking=False, start_timestamp=None, end_timestamp=None):
+        self.user_id = user_id
+        self.is_speaking=is_speaking
+        self.start = start_timestamp
+        self.end = end_timestamp
+
+    def set_speaking(self, is_speaking):
+        self.is_speaking = is_speaking
+
+    def is_speaking(self):
+        return self.is_speaking
+
+    def set_start_timestamp(self, start):
+        self.start = start
+
+    def get_start_timestamp(self):
+        return self.start
+
+    def set_end_timestamp(self, end):
+        self.end = end
+
+    def get_end_timestamp(self):
+        return self.end
