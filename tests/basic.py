@@ -8,6 +8,9 @@ from tridlcore.gen.ttypes import RequestContext
 from trpersistsvc.gen import TPersistService
 
 class BasicTest(unittest.TestCase):
+    """
+        Test the service interface.
+    """
 
     @classmethod
     def setUpClass(cls):

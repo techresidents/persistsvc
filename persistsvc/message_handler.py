@@ -1,34 +1,36 @@
 import datetime
 import logging
 
+from trchatsvc.gen.ttypes import Message, MessageType
+
+from trpycore.timezone import tz
+
 from trsvcscore.models import ChatMinute, ChatSpeakingMarker,\
     ChatTag, ChatMessageType
 
-
 class ChatMessageHandler(object):
     """
-        Handler to process chat messages and persist the associated
-        message data.
+        Handler to process a chat message by creating the associated
+        entity (Tag, Minute, Marker, etc) and storing it in the db.
 
         This handler is responsible for:
             1) Filtering out messages that don't need to be persisted
             2) Creating model instances from chat messages
             3) Persisting model instances
     """
-    def __init__(self, db_session):
+    def __init__(self, db_session, chat_session_id):
         self.log = logging.getLogger(__name__)
         self.db_session = db_session
+        self.chat_session_id = chat_session_id
 
         # Retrieve chat message type IDs
         self.MARKER_CREATE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MARKER_CREATE').one().id
-        self.MINUTE_CREATE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MINUTE_CREATE').one().id
-        self.MINUTE_UPDATE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MINUTE_UPDATE').one().id
         self.TAG_CREATE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='TAG_CREATE').one().id
         self.TAG_DELETE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='TAG_DELETE').one().id
 
         # Create handlers for each type of message we need to persist
         self.chat_marker_handler = ChatMarkerHandler()
-        self.chat_minute_handler = ChatMinuteHandler()
+        self.chat_minute_handler = ChatMinuteHandler(self.chat_session_id)
         self.chat_tag_handler = ChatTagHandler()
 
 
@@ -44,43 +46,45 @@ class ChatMessageHandler(object):
         """
         ret = None
 
-        if (message.type_id == self.MINUTE_CREATE_TYPE):
+        if (message.header.type == MessageType.MINUTE_CREATE):
+            print 'handling minute create message id=%s' % message.minuteCreateMessage.minuteId
             ret = self.chat_minute_handler.create_model(message)
             if (ret is not None):
                 self.db_session.add(ret)
                 self.db_session.flush() # force a flush so that the chat minute object gets an ID
                 self.chat_minute_handler.set_active_minute(ret)
 
-        elif (message.type_id == self.MINUTE_UPDATE_TYPE):
+        elif (message.header.type == MessageType.MINUTE_UPDATE):
+            print 'handling minute update message id=%s' % message.minuteUpdateMessage.minuteId
             ret = self.chat_minute_handler.update_model(message)
             if (ret is not None):
                 self.db_session.add(ret)
 
-        elif (message_type.id == self.MARKER_CREATE_TYPE):
-            ret = self.chat_marker_handler.create_model(
-                message,
-                self.chat_minute_handler.get_active_minute())
-            if (ret is not None):
-                db_session.add(ret)
-
-        elif (message_type.id == self.TAG_CREATE_TYPE):
-            ret = self.chat_tag_handler.create_model(
-                message,
-                self.chat_minute_handler.get_active_minute())
-            if (ret is not None):
-                db_session.add(ret)
-
-        elif (message_type.id == self.TAG_DELETE_TYPE):
-            ret = self.chat_tag_handler.update_model(message)
-            if (ret is not None):
-                db_session.add(ret)
+#        elif (message_type.id == self.MARKER_CREATE_TYPE):
+#            ret = self.chat_marker_handler.create_model(
+#                message,
+#                self.chat_minute_handler.get_active_minute())
+#            if (ret is not None):
+#                db_session.add(ret)
+#
+#        elif (message_type.id == self.TAG_CREATE_TYPE):
+#            ret = self.chat_tag_handler.create_model(
+#                message,
+#                self.chat_minute_handler.get_active_minute())
+#            if (ret is not None):
+#                db_session.add(ret)
+#
+#        elif (message_type.id == self.TAG_DELETE_TYPE):
+#            ret = self.chat_tag_handler.update_model(message)
+#            if (ret is not None):
+#                db_session.add(ret)
 
         return ret
 
 
 class ChatMinuteHandler(object):
     """
-        Handler for Chat Minute messages
+        Handler for Chat Minute messages.
 
         This class creates model instances
         from chat minute messages and persists
@@ -93,48 +97,42 @@ class ChatMinuteHandler(object):
         This class also maintains the active chat minute.
         """
 
-    def __init__(self):
+    def __init__(self, chat_session_id):
         self.log = logging.getLogger(__name__)
-        self.active_minute = None
-        self.all_minutes = {}
+        self.chat_session_id = chat_session_id
+        self.active_minute_stack = [] # stores chat_minute models
+        self.all_minutes = {} # includes invalid chat messages that were not persisted, if any
 
     def set_active_minute(self, chat_minute):
-        self.active_minute = chat_minute
-        self.log.debug('The new active chat minute id=%s' % self.active_minute.id)
+        # We set the active minute via this method so that we can
+        # set the active after the db_session has been flushed.
+        self.active_minute_stack.append(chat_minute)
+        self.log.debug('The new active chat minute id=%s' % chat_minute.id)
 
     def get_active_minute(self):
-        return self.active_minute
-
-    def _decode_message_data(self, message):
-        # read message format type
-        # parse message data and fill in data structure
-        return None
+        # The active minute is the last minute added to the stack
+        return self.active_minute_stack[-1]
 
     def create_model(self, message):
         """
-            Create model instance
+            Create model instance from Thrift Message
 
             Returns None if creation failed.
             Creation can fail if the input message fails to pass biz rules filter.
         """
         ret = None
 
-        # Decode chat message data blob
-        message_data = _decode_message_data(message)
-
         # Create model from message
-        if (self._is_valid_create_message(message, message_data)):
-            minute_start = datetime.datetime.now() # from data blob
-            minute_end = message.time # from data blob
+        if (self._is_valid_create_message(message)):
+            start_time = tz.timestamp_to_utc(message.minuteCreateMessage.startTimestamp)
             ret = ChatMinute(
-                chat_session_id=message.chat_session_id,
-                start=minute_start,
-                end=minute_end)
-            self.active_minute = ret
+                chat_session_id=self.chat_session_id,
+                start=start_time,
+                end=None)
 
-        # Store message and its data for easy reference,
+        # Store message and its associated model for easy reference,
         # (specifically for minuteID look-ups on minute-update messages)
-        minute_data = JobData(message_data.minuteId, message, message_data, ret)
+        minute_data = JobData(message.minuteCreateMessage.minuteId, message, None, ret)
         self.all_minutes[minute_data.id] = minute_data
 
         return ret
@@ -148,27 +146,25 @@ class ChatMinuteHandler(object):
             Returns None if message is invalid.
         """
         ret = None
+        minute_id = message.minuteUpdateMessage.minuteId
 
-        # Decode chat message data blob
-        message_data = _decode_message_data(message)
-
-        if (self._is_valid_update_message(message, message_data)):
-            minute_data = self.all_minutes[message_data.minuteId]
+        if (self._is_valid_update_message(message)):
+            # Update the minute model with the end timestamp
+            minute_data = self.all_minutes[minute_id]
             minute_model = minute_data.get_model()
-            minute.model.end = message_data.endTimestamp
+            end_time = tz.timestamp_to_utc(message.minuteUpdateMessage.endTimestamp)
+            minute_model.end = end_time
             ret = minute_model
-            # The active minute is being set to None to ensure that we catch any messages
-            # that might occur between the end of one chat minute and the start of the
-            # next chat minute.
-            self.active_minute = None
+            # Pop the active minute off the stack
+            self.active_minute_stack.pop()
 
         # Overwrite existing chat minute data with the newly updated data
-        minute_data = JobData(message_data.minuteId, message, message_data, ret)
+        minute_data = JobData(minute_id, message, None, ret)
         self.all_minutes[minute_data.id] = minute_data
 
         return ret
 
-    def _is_valid_create_message(self, message, message_data):
+    def _is_valid_create_message(self, message):
         """
             Returns True if message should be persisted, returns False otherwise.
         """
@@ -178,23 +174,25 @@ class ChatMinuteHandler(object):
         # message possesses.  This means we can avoid a duplicate message ID check here.
 
         # TODO add timestamp check to ensure it doesn't precede the previous minute?
+
         ret = True
         return ret
 
-    def _is_valid_update_message(self, message, message_data):
+    def _is_valid_update_message(self, message):
         """
             Returns True if message should be persisted, returns False otherwise.
         """
         ret = False
-
-        if (message_data.minuteId in self.all_minutes):
-            minute_data = self.all_minutes[message_data.minuteId]
+        minute_id = message.minuteUpdateMessage.minuteId
+        if (minute_id in self.all_minutes):
+            minute_data = self.all_minutes[minute_id]
             minute_model = minute_data.get_model()
             # if minuteID has an associated model, then we tried to persist the message
             if (minute_model is not None):
                 # Since we process messages chronologically, ensure that the referenced minuteID
-                # is also the active chat minute
-                if(minute_model == self.active_minute):
+                # is also the active chat minute. This will also prevent us from processing
+                # duplicate update minute messages, if any.
+                if(minute_model is self.active_minute_stack[-1]):
                     ret = True
 
         return ret
@@ -215,6 +213,7 @@ class ChatMarkerHandler(object):
     # We will only store speaking markers if the user
     # was speaking for longer than this threshold value.
     SPEAKING_DURATION_THRESHOLD = 30000 # 30 secs in millis
+    #TODO Jeff wanted to detect if the current speaking marker was too large
 
     def __init__(self):
         self.log = logging.getLogger(__name__)
@@ -433,7 +432,7 @@ class JobData(object):
         The id parameter represents a tagId, minuteId, or markerId.
         This data is included in the chat message data blob.
     """
-    def __init__(self, id, message, message_data, model=None):
+    def __init__(self, id, message, message_data=None, model=None):
         self.id = id
         self.message = message
         self.message_data = message_data

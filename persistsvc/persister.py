@@ -6,14 +6,13 @@ import time
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql import func
 
+from trchatsvc.gen.ttypes import Message
 from trpycore.alg.grouping import group
+from trpycore.thrift.serialization import deserialize
 from trpycore.timezone import tz
 from trpycore.thread.util import join
 from trpycore.thread.threadpool import ThreadPool
-from trsvcscore.models import Chat, ChatRegistration, \
-    ChatScheduleJob, ChatSession, ChatUser,\
-    ChatPersistJob, ChatMessage, ChatMessageType, \
-    ChatMinute, ChatTag
+from trsvcscore.models import ChatPersistJob, ChatMessage, ChatMessageFormatType
 
 from cache import ChatMessageCache
 from mapper import ChatMessageMapper
@@ -31,8 +30,7 @@ class DuplicatePersistJobException(Exception):
 
 class ChatPersister(object):
     """
-        Responsible for persisting all chat messages that we
-        are interested in storing in the database.
+        Responsible for persisting all chat messages that are stored in the database.
 
         This class is responsible for reading all the ChatMessages
         that the Chat Service has persisted and creating new entities
@@ -46,7 +44,6 @@ class ChatPersister(object):
         self.db_session_factory = db_session_factory
         self.job_id = job_id
         self.chat_session_id = None
-        self.chat_message_cache = None
 
     def create_db_session(self):
         """Create  new sqlalchemy db session.
@@ -83,7 +80,7 @@ class ChatPersister(object):
     def _start_chat_persist_job(self):
         """Start processing the chat persist job.
 
-        Mark the ChatPersistJob record in the db as started by updating the start
+        Mark the ChatPersistJob record in the db as started by updating the 'start'
         field with the current timestamp.
         """
         self.log.info("Starting chat persist job with job_id=%d ..." % self.job_id)
@@ -105,11 +102,12 @@ class ChatPersister(object):
             raise DuplicatePersistJobException(message="Chat persist job with job_id=%d already claimed. Stopping processing." % self.job_id)
 
         db_session.commit()
+        # db_session.close() TODO
 
     def _end_chat_persist_job(self):
         """End processing of the ChatPersistJob.
 
-        Mark the ChatPersistJob record as finished by updating the end
+        Mark the ChatPersistJob record as finished by updating the 'end'
         field with the current time.
         """
         self.log.info("Ending chat persist job with job_id=%d ..." % self.job_id)
@@ -117,12 +115,13 @@ class ChatPersister(object):
         job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
         job.end = func.current_timestamp()
         db_session.commit()
+        # db_session.close() TODO
 
     def _abort_chat_persist_job(self):
         """Abort the ChatPersistJob.
 
-        Abort the current persist job. Reset the start column and
-        owner columns to NULL.
+        Abort the current persist job. Reset the 'start' column and
+        'owner' column to NULL.
         """
         self.log.error("Aborting chat persist job with job_id=%d ..." % self.job_id)
         db_session = self.create_db_session()
@@ -130,6 +129,7 @@ class ChatPersister(object):
         job.start = None
         job.owner = None
         db_session.commit()
+        # db_session.close() TODO
         # TODO: Monitor thread is stopping after abort is called.
         # TODO: What happens if this function throws?
 
@@ -145,6 +145,12 @@ class ChatPersister(object):
             job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
             self.chat_session_id = job.chat_session.id
 
+            thrift_b64_format_id = db_session.query(ChatMessageFormatType).\
+                filter(ChatMessageFormatType.name=='THRIFT_BINARY_B64').\
+                one().\
+                id
+            print thrift_b64_format_id
+
             # Read all chat messages that were stored by the chat svc.
             # It's important that the messages be consumed in chronological
             # order so that ordering dependencies between messages can be
@@ -152,18 +158,29 @@ class ChatPersister(object):
             # (e.g. ChatTags needing a reference to a ChatMinute)
             chat_messages = db_session.query(ChatMessage).\
                 filter(ChatMessage.chat_session_id == self.chat_session_id).\
+                filter(ChatMessage.format_type_id == thrift_b64_format_id).\
                 order_by(ChatMessage.timestamp).\
                 all()
 
             self.log.info("Persist job_id=%d found %d messages to process for chat_session_id=%d" %
                           (self.job_id, len(chat_messages), self.chat_session_id))
 
-            handler = ChatMessageHandler(db_session)
-            for message in chat_messages:
+            # Deserialize all chat message data
+            deserialized_chat_msgs = []
+            for chat_message in chat_messages:
+                deserialized_msg = Message()
+                deserialize(deserialized_msg, chat_message.data)
+                deserialized_chat_msgs.append(deserialized_msg)
+
+            # Process the deserialized chat messages
+            handler = ChatMessageHandler(db_session, self.chat_session_id)
+            for message in deserialized_chat_msgs:
+                print message.header.type
                 handler.process(message)
 
             # commit all db changes
             db_session.commit()
+            # db_session.close() TODO
 
         except Exception:
             db_session.rollback()
