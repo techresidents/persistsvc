@@ -66,7 +66,7 @@ class ChatMessageHandler(object):
 #                db_session.add(ret)
 #
         elif message.header.type == MessageType.TAG_CREATE:
-            print 'handling tag create message id=%s' % message.tagCreateMessage.tagId
+            #print 'handling tag create message id=%s' % message.tagCreateMessage.tagId
             ret = self.chat_tag_handler.create_model(
                 message,
                 self.chat_minute_handler.get_active_minute().id)
@@ -74,7 +74,7 @@ class ChatMessageHandler(object):
                 self.db_session.add(ret)
 
         elif message.header.type == MessageType.TAG_DELETE:
-            print 'handling tag delete message id=%s' % message.tagDeleteMessage.tagId
+            #print 'handling tag delete message id=%s' % message.tagDeleteMessage.tagId
             ret = self.chat_tag_handler.delete_model(message)
             if ret is not None:
                 self.db_session.add(ret)
@@ -123,7 +123,7 @@ class ChatMinuteHandler(object):
         ret = None
 
         # Create model from message
-        if (self._is_valid_create_message(message)):
+        if self._is_valid_create_message(message):
             start_time = tz.timestamp_to_utc(message.minuteCreateMessage.startTimestamp)
             ret = ChatMinute(
                 chat_session_id=self.chat_session_id,
@@ -132,7 +132,7 @@ class ChatMinuteHandler(object):
 
         # Store message and its associated model for easy reference,
         # (specifically for minuteID look-ups on minute-update messages)
-        minute_data = JobData(message.minuteCreateMessage.minuteId, message, None, ret)
+        minute_data = MessageData(message.minuteCreateMessage.minuteId, message, ret)
         self.all_minutes[minute_data.id] = minute_data
 
         return ret
@@ -148,7 +148,7 @@ class ChatMinuteHandler(object):
         ret = None
         minute_id = message.minuteUpdateMessage.minuteId
 
-        if (self._is_valid_update_message(message)):
+        if self._is_valid_update_message(message):
             # Update the minute model with the end timestamp
             minute_data = self.all_minutes[minute_id]
             minute_model = minute_data.get_model()
@@ -160,7 +160,7 @@ class ChatMinuteHandler(object):
 
         # Overwrite existing chat minute data with the newly updated data
         # TODO is this the best way?
-        minute_data = JobData(minute_id, message, None, ret)
+        minute_data = MessageData(minute_id, message, ret)
         self.all_minutes[minute_id] = minute_data
 
 #        # Update state
@@ -198,12 +198,18 @@ class ChatMinuteHandler(object):
             minute_data = self.all_minutes[minute_id]
             minute_model = minute_data.get_model()
             # if minuteID has an associated model, then we tried to persist the message
-            if (minute_model is not None):
+            if minute_model is not None:
                 # Since we process messages chronologically, ensure that the referenced minuteID
                 # is also the active chat minute. This will also prevent us from processing
                 # duplicate update minute messages, if any.
-                if(minute_model is self.active_minute_stack[-1]):
+                if minute_model is self.active_minute_stack[-1]:
+                    print 'Minute model id is %s' % minute_model.id
+                    print 'The active minute model id is %s' % self.active_minute_stack[-1].id
                     ret = True
+                else:
+                    print 'Failed to process minute update msg for id=%s'% minute_id
+                    print 'Minute model id is %s' % minute_model.id
+                    print 'The active minute model id is %s' % self.active_minute_stack[-1].id
 
         return ret
 
@@ -291,7 +297,7 @@ class ChatMarkerHandler(object):
             persist_marker = False
 
         # Store message and its data for easy reference
-        marker_data = JobData(message_data.markerId, message, message_data, ret)
+        marker_data = MessageData(message_data.markerId, message, message_data, ret)
         self.all_markers[marker_data.id] = marker_data
 
         return ret
@@ -347,11 +353,12 @@ class ChatTagHandler(object):
                 user_id=message.header.userId,
                 chat_minute_id=chat_minute_id,
                 tag_id=message.tagCreateMessage.tagReferenceId,
-                name=message.tagCreateMessage.name)
+                name=message.tagCreateMessage.name,
+                deleted=False)
 
         # Store message and its data for easy reference,
         # (specifically for tagID look-ups on tag delete messages)
-        tag_data = JobData(message.tagCreateMessage.tagId, message, None, ret)
+        tag_data = MessageData(message.tagCreateMessage.tagId, message, ret)
         self.all_tags[tag_data.id] = tag_data
 
         return ret
@@ -423,18 +430,16 @@ class ChatTagHandler(object):
 
 
 
-class JobData(object):
+class MessageData(object):
     """
         Data structure to maintain references to a chat message's
-        associated message, decoded message data, and model.
+        associated message and model.
 
-        The id parameter represents a tagId, minuteId, or markerId.
-        This data is included in the chat message data blob.
+        The id parameter represents a tagId, minuteId, markerId, etc.
     """
-    def __init__(self, id, message, message_data=None, model=None):
+    def __init__(self, id, message, model=None):
         self.id = id
         self.message = message
-        self.message_data = message_data
         self.model = model
 
     def set_message(self, message):
@@ -442,12 +447,6 @@ class JobData(object):
 
     def get_message(self):
         return self.message
-
-    def set_message_data(self, message_data):
-        self.message_data = message_data
-
-    def get_message_data(self):
-        return self.message_data
 
     def set_model(self, tag_model):
         self.model = tag_model
