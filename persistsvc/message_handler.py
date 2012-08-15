@@ -1,7 +1,7 @@
 import datetime
 import logging
 
-from trchatsvc.gen.ttypes import Message, MessageType
+from trchatsvc.gen.ttypes import Message, MessageType, MarkerType
 
 from trpycore.timezone import tz
 
@@ -22,9 +22,6 @@ class ChatMessageHandler(object):
         self.log = logging.getLogger(__name__)
         self.db_session = db_session
         self.chat_session_id = chat_session_id
-
-        # Retrieve chat message type IDs
-        self.MARKER_CREATE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MARKER_CREATE').one().id
 
         # Create handlers for each type of message we need to persist
         self.chat_marker_handler = ChatMarkerHandler()
@@ -58,13 +55,13 @@ class ChatMessageHandler(object):
             if ret is not None:
                 self.db_session.add(ret)
 
-#        elif message_type.id == self.MARKER_CREATE_TYPE:
-#            ret = self.chat_marker_handler.create_model(
-#                message,
-#                self.chat_minute_handler.get_active_minute().id)
-#            if (ret is not None):
-#                db_session.add(ret)
-#
+        elif message.header.type == MessageType.MARKER_CREATE:
+            ret = self.chat_marker_handler.create_model(
+                message,
+                self.chat_minute_handler.get_active_minute().id)
+            if ret is not None:
+                db_session.add(ret)
+
         elif message.header.type == MessageType.TAG_CREATE:
             #print 'handling tag create message id=%s' % message.tagCreateMessage.tagId
             ret = self.chat_tag_handler.create_model(
@@ -236,11 +233,6 @@ class ChatMarkerHandler(object):
         self.all_markers = {}
         self.speaking_state = {}
 
-    def _decode_message_data(self, message):
-        # read message format type
-        # parse message data and fill in data structure
-        return None
-
     def create_model(self, message, chat_minute_id):
         """
             Create model instance
@@ -250,37 +242,34 @@ class ChatMarkerHandler(object):
         """
         ret = None
 
-        # Decode chat message data blob
-        message_data = _decode_message_data(message)
-
-        if (self._is_valid_message(message, message_data)):
+        if self._is_valid_message(message):
 
             # Only expecting & handling speaking markers for now
 
-            # Read userId and get associated speaking state
-            user_id = message_data.userId
+            # Get user's speaking state
+            user_id = message.header.userId
             user_speaking_data = None
-            if (user_id not in self.speaking_state):
+            if user_id not in self.speaking_state:
                 user_speaking_data = SpeakingData(user_id)
             else:
                 user_speaking_data = self.speaking_state[user_id]
 
             # Determine if the speaking minute has ended and we need to persist the marker
-            if (message_data.isSpeaking):
+            if message.markerCreateMessage.isSpeaking:
                 # msg indicates user started speaking
-                if (not user_speaking_data.is_speaking()):
+                if not user_speaking_data.is_speaking():
                     # If user wasn't already speaking, process msg.
                     # Ignore duplicate speaking_start markers.
-                    user_speaking_data.set_start_timestamp(message.timestamp)
+                    user_speaking_data.set_start_timestamp(message.header.timestamp)
                     user_speaking_data.set_speaking(True)
             else:
                 # msg indicates user stopped speaking
-                if (user_speaking_data.is_speaking()):
+                if user_speaking_data.is_speaking():
                     # If user was already speaking, process msg.
                     # Ignore duplicate speaking_end markers.
-                    user_speaking_data.set_end_timestamp(message.timestamp)
+                    user_speaking_data.set_end_timestamp(message.header.timestamp)
                     duration = user_speaking_data.calculate_speaking_duration()
-                    if (duration > SPEAKING_DURATION_THRESHOLD):
+                    if duration > SPEAKING_DURATION_THRESHOLD:
                         # Only persist speaking markers with significant duration
                         ret = ChatSpeakingMarker(
                             user_id=user_id,
@@ -297,7 +286,7 @@ class ChatMarkerHandler(object):
             persist_marker = False
 
         # Store message and its data for easy reference
-        marker_data = MessageData(message_data.markerId, message, message_data, ret)
+        marker_data = MessageData(message_data.markerId, message, ret)
         self.all_markers[marker_data.id] = marker_data
 
         return ret
@@ -313,11 +302,9 @@ class ChatMarkerHandler(object):
         # Chat messages are guaranteed to be unique due to the message_id attribute that each
         # message possesses.  This means we can avoid a duplicate message ID check here.
 
-        #TODO only pass chat speaking markers
-        # if message_data.marker.type == chat_speaking
-        #   ret = True
+        if message.markerCreateMessage.type == MarkerType.SPEAKING_MARKER:
+            ret = True
 
-        ret = True
         return ret
 
 class ChatTagHandler(object):
