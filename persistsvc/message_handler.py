@@ -25,13 +25,11 @@ class ChatMessageHandler(object):
 
         # Retrieve chat message type IDs
         self.MARKER_CREATE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='MARKER_CREATE').one().id
-        self.TAG_CREATE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='TAG_CREATE').one().id
-        self.TAG_DELETE_TYPE = db_session.query(ChatMessageType).filter(ChatMessageType.name=='TAG_DELETE').one().id
 
         # Create handlers for each type of message we need to persist
         self.chat_marker_handler = ChatMarkerHandler()
         self.chat_minute_handler = ChatMinuteHandler(self.chat_session_id)
-        self.chat_tag_handler = ChatTagHandler()
+        self.chat_tag_handler = ChatTagHandler(self.chat_session_id)
 
 
     def process(self, message):
@@ -46,38 +44,40 @@ class ChatMessageHandler(object):
         """
         ret = None
 
-        if (message.header.type == MessageType.MINUTE_CREATE):
+        if message.header.type == MessageType.MINUTE_CREATE:
             print 'handling minute create message id=%s' % message.minuteCreateMessage.minuteId
             ret = self.chat_minute_handler.create_model(message)
-            if (ret is not None):
+            if ret is not None:
                 self.db_session.add(ret)
                 self.db_session.flush() # force a flush so that the chat minute object gets an ID
                 self.chat_minute_handler.set_active_minute(ret)
 
-        elif (message.header.type == MessageType.MINUTE_UPDATE):
+        elif message.header.type == MessageType.MINUTE_UPDATE:
             print 'handling minute update message id=%s' % message.minuteUpdateMessage.minuteId
             ret = self.chat_minute_handler.update_model(message)
-            if (ret is not None):
+            if ret is not None:
                 self.db_session.add(ret)
 
-#        elif (message_type.id == self.MARKER_CREATE_TYPE):
+#        elif message_type.id == self.MARKER_CREATE_TYPE:
 #            ret = self.chat_marker_handler.create_model(
 #                message,
-#                self.chat_minute_handler.get_active_minute())
+#                self.chat_minute_handler.get_active_minute().id)
 #            if (ret is not None):
 #                db_session.add(ret)
 #
-#        elif (message_type.id == self.TAG_CREATE_TYPE):
-#            ret = self.chat_tag_handler.create_model(
-#                message,
-#                self.chat_minute_handler.get_active_minute())
-#            if (ret is not None):
-#                db_session.add(ret)
-#
-#        elif (message_type.id == self.TAG_DELETE_TYPE):
-#            ret = self.chat_tag_handler.update_model(message)
-#            if (ret is not None):
-#                db_session.add(ret)
+        elif message.header.type == MessageType.TAG_CREATE:
+            print 'handling tag create message id=%s' % message.tagCreateMessage.tagId
+            ret = self.chat_tag_handler.create_model(
+                message,
+                self.chat_minute_handler.get_active_minute().id)
+            if ret is not None:
+                self.db_session.add(ret)
+
+        elif message.header.type == MessageType.TAG_DELETE:
+            print 'handling tag delete message id=%s' % message.tagDeleteMessage.tagId
+            ret = self.chat_tag_handler.delete_model(message)
+            if ret is not None:
+                self.db_session.add(ret)
 
         return ret
 
@@ -159,8 +159,18 @@ class ChatMinuteHandler(object):
             self.active_minute_stack.pop()
 
         # Overwrite existing chat minute data with the newly updated data
+        # TODO is this the best way?
         minute_data = JobData(minute_id, message, None, ret)
-        self.all_minutes[minute_data.id] = minute_data
+        self.all_minutes[minute_id] = minute_data
+
+#        # Update state
+#        if ret is not None:
+#            # Overwrite the model data associated
+#            # with the minute create message
+#            # to reflect its new updated state.
+#            minute_data = self.all_minutes[minute_id]
+#            minute_data.set_model(ret)
+#            self.all_minutes[minute_id] = minute_data
 
         return ret
 
@@ -317,14 +327,10 @@ class ChatTagHandler(object):
         duplicate messages and filtering any unwanted messages.
         """
 
-    def __init__(self):
+    def __init__(self, chat_session_id):
+        self.chat_session_id = chat_session_id
         self.log = logging.getLogger(__name__)
         self.all_tags = {}
-
-    def _decode_message_data(self, message):
-        # read message format type
-        # parse message data and fill in data structure
-        return None
 
     def create_model(self, message, chat_minute_id):
         """
@@ -335,30 +341,24 @@ class ChatTagHandler(object):
         """
         ret = None
 
-        # Decode chat message data blob
-        message_data = _decode_message_data(message)
-
         # Create the model from the message
-        if (self._is_valid_create_tag_message(message, message_data)):
-            user = 'userID' # from data blob
-            name = 'name' # from data blob
-            tag_ref_id = '1' # from data blob
+        if self._is_valid_create_tag_message(message):
             ret = ChatTag(
-                user_id=user,
+                user_id=message.header.userId,
                 chat_minute_id=chat_minute_id,
-                tag=tag_ref_id,
-                name=name)
+                tag_id=message.tagCreateMessage.tagReferenceId,
+                name=message.tagCreateMessage.name)
 
         # Store message and its data for easy reference,
         # (specifically for tagID look-ups on tag delete messages)
-        tag_data = JobData(message_data.tagId, message, message_data, ret)
-        self.all_tags[tag_data.tag_id] = tag_data
+        tag_data = JobData(message.tagCreateMessage.tagId, message, None, ret)
+        self.all_tags[tag_data.id] = tag_data
 
         return ret
 
-    def update_model(self, message):
+    def delete_model(self, message):
         """
-            Update model instance.
+            Delete model instance.
 
             Handles marking a chat tag model for delete.
             Returns the updated model instance.
@@ -366,26 +366,26 @@ class ChatTagHandler(object):
         """
         ret = None
 
-        # Decode chat message data blob
-        message_data = _decode_message_data(message)
-
         # Update model
-        if (self._is_valid_delete_tag_message(message, message_data)):
-            tag_data = self.all_tags[message_data.tagId]
-            tag_model = tag_data.get_tag_model()
-            if (tag_model is not None):
-                # implies the tag-create msg was valid and persisted
-                tag_model.deleted = True
+        tag_id = message.tagDeleteMessage.tagId
+        if self._is_valid_delete_tag_message(message):
+            tag_data = self.all_tags[tag_id]
+            tag_model = tag_data.get_model()
+            tag_model.deleted = True
             ret = tag_model
 
         # Update state
-        # This will overwrite the message data associated with the tag create message
-        tag_data = JobData(message_data.tagId, message, message_data, ret)
-        self.all_tags[message_data.tagId] = tag_data
+        if ret is not None:
+            # Overwrite the model data associated
+            # with the tag create message
+            # to reflect its new deleted state.
+            tag_data = self.all_tags[tag_id]
+            tag_data.set_model(ret)
+            self.all_tags[tag_id] = tag_data
 
         return ret
 
-    def _is_valid_create_tag_message(self, message, message_data):
+    def _is_valid_create_tag_message(self, message):
         """
             Returns True if message should be persisted, returns False otherwise.
         """
@@ -395,29 +395,28 @@ class ChatTagHandler(object):
         # chat message possesses.  This means we can avoid a duplicate messageID check here.
 
         # Check for duplicate tagID to prevent overwriting existing tag data
-        if (message_data.tagId in self.all_tags):
-            self.log.warning('Chat message to create tag with duplicate tagID=%s' % message_data.tagId)
+        tag_id = message.tagCreateMessage.tagId
+        if tag_id in self.all_tags:
+            self.log.warning('Attempted to create tag with duplicate tagID=%s' % tag_id)
             return ret
 
-        # Prevent adding the same tag within the same chat minute
-
-
+        # TODO Prevent adding the same tag within the same chat minute
         ret = True
         return ret
 
-    def _is_valid_delete_tag_message(self, message, message_data):
+    def _is_valid_delete_tag_message(self, message):
         """
             Returns True if message should be persisted, returns False otherwise.
         """
         ret = False
-
-        if (message_data.tagId in self.all_tags):
-            tag_data = self.all_tags[message_data.tagId]
+        tag_id = message.tagDeleteMessage.tagId
+        if tag_id in self.all_tags:
+            tag_data = self.all_tags[tag_id]
             tag_model = tag_data.get_model()
             # if tagID has an associated model, then we tried to persist the message
-            if (tag_model is not None):
+            if tag_model is not None:
                 # Ensure that the model hasn't already been marked for delete
-                if (tag_model.deleted == False):
+                if not tag_model.deleted:
                     ret = True
 
         return ret
