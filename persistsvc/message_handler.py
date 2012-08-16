@@ -41,40 +41,42 @@ class ChatMessageHandler(object):
         """
         ret = None
 
-        if message.header.type == MessageType.MINUTE_CREATE:
-            print 'handling minute create message id=%s' % message.minuteCreateMessage.minuteId
-            ret = self.chat_minute_handler.create_model(message)
-            if ret is not None:
-                self.db_session.add(ret)
-                self.db_session.flush() # force a flush so that the chat minute object gets an ID
-                self.chat_minute_handler.set_active_minute(ret)
+#        if message.header.type == MessageType.MINUTE_CREATE:
+#            #print 'handling minute create message id=%s' % message.minuteCreateMessage.minuteId
+#            ret = self.chat_minute_handler.create_model(message)
+#            if ret is not None:
+#                self.db_session.add(ret)
+#                self.db_session.flush() # force a flush so that the chat minute object gets an ID
+#                self.chat_minute_handler.set_active_minute(ret)
+#
+#        elif message.header.type == MessageType.MINUTE_UPDATE:
+#            #print 'handling minute update message id=%s' % message.minuteUpdateMessage.minuteId
+#            ret = self.chat_minute_handler.update_model(message)
+#            if ret is not None:
+#                self.db_session.add(ret)
 
-        elif message.header.type == MessageType.MINUTE_UPDATE:
-            print 'handling minute update message id=%s' % message.minuteUpdateMessage.minuteId
-            ret = self.chat_minute_handler.update_model(message)
-            if ret is not None:
-                self.db_session.add(ret)
-
-        elif message.header.type == MessageType.MARKER_CREATE:
+        if message.header.type == MessageType.MARKER_CREATE:
+            print 'handling marker create message id=%s' % message.markerCreateMessage.markerId
             ret = self.chat_marker_handler.create_model(
                 message,
-                self.chat_minute_handler.get_active_minute().id)
+                165) # TODO was testing just speaking markers
+            # TODO need to handle if there's no active chat minute yet
             if ret is not None:
                 db_session.add(ret)
 
-        elif message.header.type == MessageType.TAG_CREATE:
-            #print 'handling tag create message id=%s' % message.tagCreateMessage.tagId
-            ret = self.chat_tag_handler.create_model(
-                message,
-                self.chat_minute_handler.get_active_minute().id)
-            if ret is not None:
-                self.db_session.add(ret)
-
-        elif message.header.type == MessageType.TAG_DELETE:
-            #print 'handling tag delete message id=%s' % message.tagDeleteMessage.tagId
-            ret = self.chat_tag_handler.delete_model(message)
-            if ret is not None:
-                self.db_session.add(ret)
+#        elif message.header.type == MessageType.TAG_CREATE:
+#            #print 'handling tag create message id=%s' % message.tagCreateMessage.tagId
+#            ret = self.chat_tag_handler.create_model(
+#                message,
+#                self.chat_minute_handler.get_active_minute().id)
+#            if ret is not None:
+#                self.db_session.add(ret)
+#
+#        elif message.header.type == MessageType.TAG_DELETE:
+#            #print 'handling tag delete message id=%s' % message.tagDeleteMessage.tagId
+#            ret = self.chat_tag_handler.delete_model(message)
+#            if ret is not None:
+#                self.db_session.add(ret)
 
         return ret
 
@@ -200,8 +202,6 @@ class ChatMinuteHandler(object):
                 # is also the active chat minute. This will also prevent us from processing
                 # duplicate update minute messages, if any.
                 if minute_model is self.active_minute_stack[-1]:
-                    print 'Minute model id is %s' % minute_model.id
-                    print 'The active minute model id is %s' % self.active_minute_stack[-1].id
                     ret = True
                 else:
                     print 'Failed to process minute update msg for id=%s'% minute_id
@@ -225,7 +225,7 @@ class ChatMarkerHandler(object):
 
     # We will only store speaking markers if the user
     # was speaking for longer than this threshold value.
-    SPEAKING_DURATION_THRESHOLD = 30000 # 30 secs in millis
+    SPEAKING_DURATION_THRESHOLD = 0 # 30 secs in millis
     #TODO Jeff wanted to detect if the current speaking marker was too large
 
     def __init__(self):
@@ -255,7 +255,7 @@ class ChatMarkerHandler(object):
                 user_speaking_data = self.speaking_state[user_id]
 
             # Determine if the speaking minute has ended and we need to persist the marker
-            if message.markerCreateMessage.isSpeaking:
+            if message.markerCreateMessage.marker.speakingMarker.isSpeaking:
                 # msg indicates user started speaking
                 if not user_speaking_data.is_speaking():
                     # If user wasn't already speaking, process msg.
@@ -286,12 +286,12 @@ class ChatMarkerHandler(object):
             persist_marker = False
 
         # Store message and its data for easy reference
-        marker_data = MessageData(message_data.markerId, message, ret)
+        marker_data = MessageData(message.markerCreateMessage.markerId, message, ret)
         self.all_markers[marker_data.id] = marker_data
 
         return ret
 
-    def _is_valid_message(self, message, message_data):
+    def _is_valid_message(self, message):
         """
             Returns True if message should be persisted, returns False otherwise.
 
@@ -302,7 +302,9 @@ class ChatMarkerHandler(object):
         # Chat messages are guaranteed to be unique due to the message_id attribute that each
         # message possesses.  This means we can avoid a duplicate message ID check here.
 
-        if message.markerCreateMessage.type == MarkerType.SPEAKING_MARKER:
+        print 'marker type is: %s' % message.markerCreateMessage.marker.type
+        if message.markerCreateMessage.marker.type == MarkerType.SPEAKING_MARKER:
+            print 'valid speaking marker'
             ret = True
 
         return ret
