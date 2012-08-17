@@ -29,16 +29,6 @@ class ChatMessageHandler(object):
         topic_id = topics_manager.get_root_topic_id(self.db_session, self.chat_session_id)
         self.topics = topics_manager.get_collection(self.db_session, topic_id)
 
-        print 'Topic list by rank:'
-        for topic in self.topics.as_list_by_rank():
-            print '%s, rank: %s, level:%s' % (topic.title, topic.rank, topic.level)
-        print 'Topic list as dict'
-        for topic in self.topics.as_dict():
-            print topic
-        print 'Topic leafs by rank'
-        for topic in  self.topics.get_leaf_list_by_rank():
-            print '%s, rank: %s, level:%s' % (topic.title, topic.rank, topic.level)
-
         # Create handlers for each type of message we need to persist
         self.chat_marker_handler = ChatMarkerHandler()
         self.chat_minute_handler = ChatMinuteHandler(self.chat_session_id, self.topics)
@@ -132,9 +122,11 @@ class ChatMinuteHandler(object):
         self.parents_to_close = self._get_parents_to_close()
 
 
-    def _get_highest_leafs(self):
+    def _get_highest_leafs(self, leaf_list):
         ret = []
-        for leaf_topic in self.topics_collection.get_leaf_list_by_rank():
+        print 'leafs:'
+        for leaf_topic in leaf_list:
+            print leaf_topic.title
             next_topic = self.topics_collection.get_next_topic(leaf_topic)
             if next_topic is None or \
                next_topic.level < leaf_topic.level:
@@ -144,7 +136,7 @@ class ChatMinuteHandler(object):
     def _get_parents_to_close(self):
         parents_to_close = {}
         leaf_list = self.topics_collection.get_leaf_list_by_rank()
-        highest_leafs = self._get_highest_leafs()
+        highest_leafs = self._get_highest_leafs(leaf_list)
         for topic in highest_leafs:
 
             # We need to match the closing level of each leaf's next-topic.
@@ -167,6 +159,9 @@ class ChatMinuteHandler(object):
             parents_to_close[topic] = parents
 
         return parents_to_close
+
+
+
 
     def set_active_minute(self, chat_minute):
         # We set the active minute via this method so that we can

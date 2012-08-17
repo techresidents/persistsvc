@@ -134,7 +134,56 @@ class TopicDataManagerTest(unittest.TestCase):
         )
 
 
-        cls.test_topic_data = [dataset1, dataset2, dataset3]
+        #
+        # Dataset #4
+        #
+        # Root
+        #   T1
+        #     T2
+        #   T3
+        #     T4
+        #     T5
+        #       T6
+        #     T7
+        #   T8
+        #   T9
+        #     T10
+        #
+        root = TopicData(topic_id=0, parent_id=None, rank=0, level=1, title='Root', description='')
+        t1   = TopicData(topic_id=1, parent_id=0,    rank=1, level=2, title='t1',   description='')
+        t2   = TopicData(topic_id=2, parent_id=1,    rank=2, level=3, title='t2',   description='')
+        t3   = TopicData(topic_id=3, parent_id=0,    rank=3, level=2, title='t3',   description='')
+        t4   = TopicData(topic_id=4, parent_id=3,    rank=4, level=3, title='t4',   description='')
+        t5   = TopicData(topic_id=5, parent_id=3,    rank=5, level=3, title='t5',   description='')
+        t6   = TopicData(topic_id=6, parent_id=5,    rank=6, level=4, title='t6',   description='')
+        t7   = TopicData(topic_id=7, parent_id=3,    rank=7, level=3, title='t7',   description='')
+        t8   = TopicData(topic_id=8, parent_id=0,    rank=8, level=2, title='t8',   description='')
+        t9   = TopicData(topic_id=9, parent_id=0,    rank=9, level=2, title='t9',   description='')
+        t10  = TopicData(topic_id=10, parent_id=9,  rank=10, level=3, title='t10',  description='')
+        topic_list_by_rank = [root, t1, t2, t3, t4, t5, t6, t7, t8, t9, t10]
+        leaf_list_by_rank = [t2, t4, t6, t7, t8, t10]
+        topic_dict = {
+            root.id : root,
+            t1.id : t1,
+            t2.id : t2,
+            t3.id : t3,
+            t4.id : t4,
+            t5.id : t5,
+            t6.id : t6,
+            t7.id : t7,
+            t8.id : t8,
+            t9.id : t9,
+            t10.id: t10
+        }
+        dataset4 = TopicTestData(
+            topic_list_by_rank,
+            leaf_list_by_rank,
+            topic_dict,
+            TopicDataCollection(topic_list_by_rank)
+        )
+
+
+        cls.test_topic_data = [dataset1, dataset2, dataset3, dataset4]
 
     @classmethod
     def tearDownClass(cls):
