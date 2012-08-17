@@ -12,7 +12,7 @@ from trpycore.thrift.serialization import deserialize
 from trpycore.timezone import tz
 from trpycore.thread.util import join
 from trpycore.thread.threadpool import ThreadPool
-from trsvcscore.models import ChatPersistJob, ChatMessage, ChatMessageFormatType
+from trsvcscore.db.models import ChatPersistJob, ChatMessage, ChatMessageFormatType
 
 from cache import ChatMessageCache
 from mapper import ChatMessageMapper
@@ -149,7 +149,6 @@ class ChatPersister(object):
                 filter(ChatMessageFormatType.name=='THRIFT_BINARY_B64').\
                 one().\
                 id
-            print thrift_b64_format_id
 
             # Read all chat messages that were stored by the chat svc.
             # It's important that the messages be consumed in chronological

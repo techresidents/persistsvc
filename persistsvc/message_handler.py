@@ -2,11 +2,12 @@ import datetime
 import logging
 
 from trchatsvc.gen.ttypes import Message, MessageType, MarkerType
-
+from trsvcscore.db.models import ChatMinute, ChatSpeakingMarker,\
+    ChatTag
 from trpycore.timezone import tz
 
-from trsvcscore.models import ChatMinute, ChatSpeakingMarker,\
-    ChatTag, ChatMessageType
+from topic_data_manager import TopicDataManager, TopicData
+
 
 class ChatMessageHandler(object):
     """
@@ -23,9 +24,24 @@ class ChatMessageHandler(object):
         self.db_session = db_session
         self.chat_session_id = chat_session_id
 
+        # Generate list of topics
+        topics_manager = TopicDataManager()
+        topic_id = topics_manager.get_root_topic_id(self.db_session, self.chat_session_id)
+        self.topics = topics_manager.get_collection(self.db_session, topic_id)
+
+        print 'Topic list by rank:'
+        for topic in self.topics.as_list_by_rank():
+            print '%s, rank: %s, level:%s' % (topic.title, topic.rank, topic.level)
+        print 'Topic list as dict'
+        for topic in self.topics.as_dict():
+            print topic
+        print 'Topic leafs by rank'
+        for topic in  self.topics.get_leaf_list_by_rank():
+            print '%s, rank: %s, level:%s' % (topic.title, topic.rank, topic.level)
+
         # Create handlers for each type of message we need to persist
         self.chat_marker_handler = ChatMarkerHandler()
-        self.chat_minute_handler = ChatMinuteHandler(self.chat_session_id)
+        self.chat_minute_handler = ChatMinuteHandler(self.chat_session_id, self.topics)
         self.chat_tag_handler = ChatTagHandler(self.chat_session_id)
 
 
@@ -48,21 +64,21 @@ class ChatMessageHandler(object):
 #                self.db_session.add(ret)
 #                self.db_session.flush() # force a flush so that the chat minute object gets an ID
 #                self.chat_minute_handler.set_active_minute(ret)
-#
+
 #        elif message.header.type == MessageType.MINUTE_UPDATE:
 #            #print 'handling minute update message id=%s' % message.minuteUpdateMessage.minuteId
 #            ret = self.chat_minute_handler.update_model(message)
 #            if ret is not None:
 #                self.db_session.add(ret)
 
-        if message.header.type == MessageType.MARKER_CREATE:
-            print 'handling marker create message id=%s' % message.markerCreateMessage.markerId
-            ret = self.chat_marker_handler.create_model(
-                message,
-                165) # TODO was testing just speaking markers
-            # TODO need to handle if there's no active chat minute yet
-            if ret is not None:
-                db_session.add(ret)
+#        elif message.header.type == MessageType.MARKER_CREATE:
+#            print 'handling marker create message id=%s' % message.markerCreateMessage.markerId
+#            ret = self.chat_marker_handler.create_model(
+#                message,
+#                165) # TODO was testing just speaking markers
+#            # TODO need to handle if there's no active chat minute yet
+#            if ret is not None:
+#                db_session.add(ret)
 
 #        elif message.header.type == MessageType.TAG_CREATE:
 #            #print 'handling tag create message id=%s' % message.tagCreateMessage.tagId
@@ -96,11 +112,61 @@ class ChatMinuteHandler(object):
         This class also maintains the active chat minute.
         """
 
-    def __init__(self, chat_session_id):
-        self.log = logging.getLogger(__name__)
+    def __init__(self, chat_session_id, topics_collection):
         self.chat_session_id = chat_session_id
+        self.topics_collection = topics_collection
+        self.log = logging.getLogger(__name__)
         self.active_minute_stack = [] # stores chat_minute models
         self.all_minutes = {} # includes invalid chat messages that were not persisted, if any
+
+        # TODO not sure what's best way to store this data
+#        self.topics_dict = {}
+#        for topic in self.topics_collection.as_list_by_rank():
+#            minute = ChatMinute(
+#                chat_session_id=self.chat_session_id,
+#                topic_id=topic.id,
+#                start=0,
+#                end=None)
+#            self.topics_dict[topic.id] = minute
+
+        self.parents_to_close = self._get_parents_to_close()
+
+
+    def _get_highest_leafs(self):
+        ret = []
+        for leaf_topic in self.topics_collection.get_leaf_list_by_rank():
+            next_topic = self.topics_collection.get_next_topic(leaf_topic)
+            if next_topic is None or \
+               next_topic.level < leaf_topic.level:
+                ret.append(leaf_topic)
+        return ret
+
+    def _get_parents_to_close(self):
+        parents_to_close = {}
+        leaf_list = self.topics_collection.get_leaf_list_by_rank()
+        highest_leafs = self._get_highest_leafs()
+        for topic in highest_leafs:
+
+            # We need to match the closing level of each leaf's next-topic.
+            next_topic = self.topics_collection.get_next_topic(topic)
+            # Close up to root level for last leaf topic
+            root_topic_level = 1
+            level_to_close = next_topic.level if next_topic is not None else root_topic_level
+
+            parents = []
+            # All leafs guaranteed to have at least one previous topic
+            tmp = self.topics_collection.get_previous_topic(topic)
+            while tmp.level >= level_to_close:
+                if tmp not in leaf_list:
+                    # We only want parents, no children allowed
+                    parents.append(tmp)
+                tmp = self.topics_collection.get_previous_topic(tmp)
+                if tmp is None:
+                    break
+
+            parents_to_close[topic] = parents
+
+        return parents_to_close
 
     def set_active_minute(self, chat_minute):
         # We set the active minute via this method so that we can
@@ -111,6 +177,33 @@ class ChatMinuteHandler(object):
     def get_active_minute(self):
         # The active minute is the last minute added to the stack
         return self.active_minute_stack[-1]
+
+
+    def _start_parents_minutes(self, topic_id):
+
+        # If this topic leaf has no siblings with a lower rank (e.g. the first child)
+        # Start parents minutes
+        pass
+
+    def _end_parents_minutes(self, topic_id):
+
+        # prev_leaf = Find the previous leaf
+        # If prev_leaf has no siblings with a higher rank (e.g. the last child)
+        # End parents minutes
+        pass
+
+    def new_create(self, message):
+        #topic_id = message.minuteCreateMessage.topicId
+
+        # If previous leaf exists
+            # Update previous leaf's end time
+            # self._end_parents_minutes(topic_id)
+
+        #self._start_parents_minutes(topic_id)
+        # Update this leaf's start time
+        pass
+
+
 
     def create_model(self, message):
         """
@@ -126,6 +219,7 @@ class ChatMinuteHandler(object):
             start_time = tz.timestamp_to_utc(message.minuteCreateMessage.startTimestamp)
             ret = ChatMinute(
                 chat_session_id=self.chat_session_id,
+                topic_id=message.minuteCreateMessage.topicId,
                 start=start_time,
                 end=None)
 
@@ -183,6 +277,8 @@ class ChatMinuteHandler(object):
         # message possesses.  This means we can avoid a duplicate message ID check here.
 
         # TODO add timestamp check to ensure it doesn't precede the previous minute?
+
+        # TODO verify that topic of message is a leaf node
 
         ret = True
         return ret
@@ -396,7 +492,7 @@ class ChatTagHandler(object):
             self.log.warning('Attempted to create tag with duplicate tagID=%s' % tag_id)
             return ret
 
-        # TODO Prevent adding the same tag within the same chat minute
+        # TODO handle exception if tag violates unique together constraint (user, minute, name)
         ret = True
         return ret
 
@@ -423,8 +519,6 @@ class MessageData(object):
     """
         Data structure to maintain references to a chat message's
         associated message and model.
-
-        The id parameter represents a tagId, minuteId, markerId, etc.
     """
     def __init__(self, id, message, model=None):
         self.id = id
