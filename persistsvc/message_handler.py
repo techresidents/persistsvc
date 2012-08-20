@@ -119,46 +119,59 @@ class ChatMinuteHandler(object):
 #                end=None)
 #            self.topics_dict[topic.id] = minute
 
-        self.parents_to_close = self._get_parents_to_close()
+        self.minute_end_topic_chain = self._get_chat_minute_end_topic_chain(topics_collection)
 
 
-    def _get_highest_leafs(self, leaf_list):
+    def _get_highest_ranked_leafs(self, topics_collection):
+        """
+            Method to retrieve the leaf topics which have the
+            highest relative rank amongst their siblings.
+
+            The leafs returned from this method will be responsible
+            for potentially closing their parent's chat minutes.
+        """
         ret = []
-        print 'leafs:'
+        leaf_list = topics_collection.get_leaf_list_by_rank()
         for leaf_topic in leaf_list:
-            print leaf_topic.title
             next_topic = self.topics_collection.get_next_topic(leaf_topic)
             if next_topic is None or \
                next_topic.level < leaf_topic.level:
                 ret.append(leaf_topic)
         return ret
 
-    def _get_parents_to_close(self):
-        parents_to_close = {}
-        leaf_list = self.topics_collection.get_leaf_list_by_rank()
-        highest_leafs = self._get_highest_leafs(leaf_list)
+
+    def _get_chat_minute_end_topic_chain(self, topics_collection):
+        minute_end_topic_chain = {}
+        leaf_list = topics_collection.get_leaf_list_by_rank()
+        highest_leafs = self._get_highest_ranked_leafs(topics_collection)
         for topic in highest_leafs:
 
             # We need to match the closing level of each leaf's next-topic.
-            next_topic = self.topics_collection.get_next_topic(topic)
+            next_topic = topics_collection.get_next_topic(topic)
             # Close up to root level for last leaf topic
             root_topic_level = 1
             level_to_close = next_topic.level if next_topic is not None else root_topic_level
 
-            parents = []
+            topic_parents_to_end_list = []
             # All leafs guaranteed to have at least one previous topic
-            tmp = self.topics_collection.get_previous_topic(topic)
+            level = topic.level
+            tmp = topics_collection.get_previous_topic(topic)
             while tmp.level >= level_to_close:
                 if tmp not in leaf_list:
-                    # We only want parents, no children allowed
-                    parents.append(tmp)
-                tmp = self.topics_collection.get_previous_topic(tmp)
+                    # We only want parents. No children allowed
+                    if tmp.level < level:
+                        # There will only ever be one topic per level that we need to close.
+                        # Thus, every time we add a parent, make decrement the level.
+                        topic_parents_to_end_list.append(tmp)
+                        level -= 1
+                tmp = topics_collection.get_previous_topic(tmp)
                 if tmp is None:
                     break
 
-            parents_to_close[topic] = parents
 
-        return parents_to_close
+            minute_end_topic_chain[topic.id] = topic_parents_to_end_list
+
+        return minute_end_topic_chain
 
 
 
