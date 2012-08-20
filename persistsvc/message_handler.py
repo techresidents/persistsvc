@@ -47,13 +47,14 @@ class ChatMessageHandler(object):
         """
         ret = None
 
-#        if message.header.type == MessageType.MINUTE_CREATE:
-#            #print 'handling minute create message id=%s' % message.minuteCreateMessage.minuteId
-#            ret = self.chat_minute_handler.create_model(message)
-#            if ret is not None:
-#                self.db_session.add(ret)
-#                self.db_session.flush() # force a flush so that the chat minute object gets an ID
-#                self.chat_minute_handler.set_active_minute(ret)
+        if message.header.type == MessageType.MINUTE_CREATE:
+            #print 'handling minute create message id=%s' % message.minuteCreateMessage.minuteId
+            ret = self.chat_minute_handler.create_models(message)
+            if ret is not None:
+                for model in ret:
+                    self.db_session.add(ret)
+                self.db_session.flush() # force a flush so that the chat minute object gets an ID
+                self.chat_minute_handler.set_active_minute(ret[0]) #TODO clean up, make more robust
 
 #        elif message.header.type == MessageType.MINUTE_UPDATE:
 #            #print 'handling minute update message id=%s' % message.minuteUpdateMessage.minuteId
@@ -101,25 +102,23 @@ class ChatMinuteHandler(object):
 
         This class also maintains the active chat minute.
         """
+    DEFAULT_MINUTE_START_TIME = 0
 
     def __init__(self, chat_session_id, topics_collection):
         self.chat_session_id = chat_session_id
         self.topics_collection = topics_collection
         self.log = logging.getLogger(__name__)
-        self.active_minute_stack = [] # stores chat_minute models
-        self.all_minutes = {} # includes invalid chat messages that were not persisted, if any
-
-        # TODO not sure what's best way to store this data
-#        self.topics_dict = {}
-#        for topic in self.topics_collection.as_list_by_rank():
-#            minute = ChatMinute(
-#                chat_session_id=self.chat_session_id,
-#                topic_id=topic.id,
-#                start=0,
-#                end=None)
-#            self.topics_dict[topic.id] = minute
-
+        self.active_minute = None
         self.minute_end_topic_chain = self._get_chat_minute_end_topic_chain(topics_collection)
+
+        self.topic_minute_map = {}
+        for topic in self.topics_collection.as_list_by_rank():
+            minute = ChatMinute(
+                chat_session_id=self.chat_session_id,
+                topic_id=topic.id,
+                start=self.DEFAULT_MINUTE_START_TIME,
+                end=None)
+            self.topic_minute_map[topic.id] = minute
 
 
     def _get_highest_ranked_leafs(self, topics_collection):
@@ -139,8 +138,12 @@ class ChatMinuteHandler(object):
                 ret.append(leaf_topic)
         return ret
 
-
     def _get_chat_minute_end_topic_chain(self, topics_collection):
+        """
+            Method to create a topic chain dictionary which describes
+            which parent topics each leaf topic is responsible for closing
+            (setting the chat-minute-end time).
+        """
         minute_end_topic_chain = {}
         leaf_list = topics_collection.get_leaf_list_by_rank()
         highest_leafs = self._get_highest_ranked_leafs(topics_collection)
@@ -148,24 +151,24 @@ class ChatMinuteHandler(object):
 
             # We need to match the closing level of each leaf's next-topic.
             next_topic = topics_collection.get_next_topic(topic)
-            # Close up to root level for last leaf topic
+            # Close up to root level for last leaf topic in topic hierarchy
             root_topic_level = 1
             level_to_close = next_topic.level if next_topic is not None else root_topic_level
 
             topic_parents_to_end_list = []
             # All leafs guaranteed to have at least one previous topic
-            level = topic.level
-            tmp = topics_collection.get_previous_topic(topic)
-            while tmp.level >= level_to_close:
-                if tmp not in leaf_list:
+            current_topic = topics_collection.get_previous_topic(topic)
+            current_closing_level = topic.level
+            while current_topic.level >= level_to_close:
+                if current_topic not in leaf_list:
                     # We only want parents. No children allowed
-                    if tmp.level < level:
+                    if current_topic.level < current_closing_level:
                         # There will only ever be one topic per level that we need to close.
-                        # Thus, every time we add a parent, make decrement the level.
-                        topic_parents_to_end_list.append(tmp)
-                        level -= 1
-                tmp = topics_collection.get_previous_topic(tmp)
-                if tmp is None:
+                        # Thus, every time we add a parent, decrement the current level.
+                        topic_parents_to_end_list.append(current_topic)
+                        current_closing_level -= 1
+                current_topic = topics_collection.get_previous_topic(current_topic)
+                if current_topic is None:
                     break
 
 
@@ -173,47 +176,65 @@ class ChatMinuteHandler(object):
 
         return minute_end_topic_chain
 
-
-
-
     def set_active_minute(self, chat_minute):
         # We set the active minute via this method so that we can
         # set the active after the db_session has been flushed.
-        self.active_minute_stack.append(chat_minute)
+        self.active_minute = chat_minute
         self.log.debug('The new active chat minute id=%s' % chat_minute.id)
 
     def get_active_minute(self):
         # The active minute is the last minute added to the stack
-        return self.active_minute_stack[-1]
+        return self.active_minute
 
+    def _start_parent_topic_minutes(self, topic_id, start_time):
+        """
+            Method responsible for starting any parent topics
+            that have not yet been started.
+        """
+        ret = []
+        topics = self.topics_collection.as_dict()
+        topic = topics[topic_id]
 
-    def _start_parents_minutes(self, topic_id):
+        previous_topic = self.topics_collection.get_previous_topic(topic)
+        while previous_topic is not None:
+            previous_topic = self.topics_collection.get_previous_topic(topic)
+            minute = self.topic_minute_map[previous_topic.id]
+            if minute.start == DEFAULT_MINUTE_START_TIME:
+                # This topic hasn't been started yet, so start it
+                minute.start = start_time
+                ret.append(minute)
+            else:
+                # All prior topics have now been started, so we can stop
+                break
 
-        # If this topic leaf has no siblings with a lower rank (e.g. the first child)
-        # Start parents minutes
-        pass
+        return ret
 
-    def _end_parents_minutes(self, topic_id):
+    def _end_previous_topic_minutes(self, topic_id, end_time):
+        """
+            Method responsible for ending the previous topic(s).
+        """
+        ret = []
 
-        # prev_leaf = Find the previous leaf
-        # If prev_leaf has no siblings with a higher rank (e.g. the last child)
-        # End parents minutes
-        pass
+        # We start at the previous leaf topic because only leaf topics
+        # are actually discussed during a chat.
+        previous_leaf = self.topics_collection.get_previous_leaf(topic_id)
+        if previous_leaf is not None:
 
-    def new_create(self, message):
-        #topic_id = message.minuteCreateMessage.topicId
+            # Update this leaf's end time
+            minute = self.topic_minute_map[topic_id]
+            minute.end = end_time
+            ret.append(minute)
 
-        # If previous leaf exists
-            # Update previous leaf's end time
-            # self._end_parents_minutes(topic_id)
+            # Update parent's end times, if needed
+            parent_topics_to_end = self.minute_end_topic_chain[previous_leaf.id]
+            for topic in parent_topics_to_end:
+                minute = self.topic_minute_map[topic.id]
+                minute.end = end_time
+                ret.append(minute)
 
-        #self._start_parents_minutes(topic_id)
-        # Update this leaf's start time
-        pass
+        return ret
 
-
-
-    def create_model(self, message):
+    def create_models(self, message):
         """
             Create model instance from Thrift Message
 
@@ -222,56 +243,49 @@ class ChatMinuteHandler(object):
         """
         ret = None
 
-        # Create model from message
+        # Create models from message
         if self._is_valid_create_message(message):
-            start_time = tz.timestamp_to_utc(message.minuteCreateMessage.startTimestamp)
-            ret = ChatMinute(
-                chat_session_id=self.chat_session_id,
-                topic_id=message.minuteCreateMessage.topicId,
-                start=start_time,
-                end=None)
 
-        # Store message and its associated model for easy reference,
-        # (specifically for minuteID look-ups on minute-update messages)
-        minute_data = MessageData(message.minuteCreateMessage.minuteId, message, ret)
-        self.all_minutes[minute_data.id] = minute_data
+            ret = []
+            topic_id = message.minuteCreateMessage.topicId
+            start_time = tz.timestamp_to_utc(message.minuteCreateMessage.startTimestamp)
+
+            # Update this topic's start time
+            minute = self.topic_minute_map[topic_id]
+            minute.start = start_time
+            ret.append(minute)
+
+            # Update parent topic's start time
+            models = self._start_parent_topic_minutes(topic_id, start_time)
+            ret.extend(models)
+
+            # Update previous topic's end-times
+            models = self._end_previous_topic_minutes(topic_id, start_time)
+            ret.extend(models)
 
         return ret
 
-    def update_model(self, message):
-        """
-            Update model instance
+    def update_models(self, message):
 
-            Handles marking the end time of a chat minute model.
-            Returns the updated model instance.
-            Returns None if message is invalid.
-        """
         ret = None
-        minute_id = message.minuteUpdateMessage.minuteId
 
         if self._is_valid_update_message(message):
-            # Update the minute model with the end timestamp
-            minute_data = self.all_minutes[minute_id]
-            minute_model = minute_data.get_model()
+
+            ret = []
+            topic_id = message.minuteCreateMessage.topicId
             end_time = tz.timestamp_to_utc(message.minuteUpdateMessage.endTimestamp)
-            minute_model.end = end_time
-            ret = minute_model
-            # Pop the active minute off the stack
-            self.active_minute_stack.pop()
 
-        # Overwrite existing chat minute data with the newly updated data
-        # TODO is this the best way?
-        minute_data = MessageData(minute_id, message, ret)
-        self.all_minutes[minute_id] = minute_data
+            # Update this leaf's end time
+            minute = self.topic_minute_map[topic_id]
+            minute.end = end_time
+            ret.append(minute)
 
-#        # Update state
-#        if ret is not None:
-#            # Overwrite the model data associated
-#            # with the minute create message
-#            # to reflect its new updated state.
-#            minute_data = self.all_minutes[minute_id]
-#            minute_data.set_model(ret)
-#            self.all_minutes[minute_id] = minute_data
+            # Update parent's end times
+            parent_topics_to_end = self.minute_end_topic_chain[topic_id]
+            for topic in parent_topics_to_end:
+                minute = self.topic_minute_map[topic.id]
+                minute.end = end_time
+                ret.append(minute)
 
         return ret
 
@@ -286,31 +300,38 @@ class ChatMinuteHandler(object):
 
         # TODO add timestamp check to ensure it doesn't precede the previous minute?
 
-        # TODO verify that topic of message is a leaf node
+        topic_id = message.minuteCreateMessage.topicId
 
-        ret = True
+        # Topic ID must be present in the topic collection
+        if topic_id in self.topics_collection.as_dict():
+
+            # We will only accept minute-create-messages when they pertain to leaf-topics.
+            # This is done because we couldn't rely upon the ordering of messages (e.g.
+            # the parent minute-create-msg arriving before the child's minute-create-msg).
+            # By only allowing minute-create-msgs from leaf topics we can manually create
+            # parent chat minutes.
+            if self.topics_collection.is_leaf_topic(topic_id):
+                ret = True
+
         return ret
 
     def _is_valid_update_message(self, message):
         """
             Returns True if message should be persisted, returns False otherwise.
+
+            The only update message we are looking for is the one that ends the
+            last topic in the chat.
         """
         ret = False
-        minute_id = message.minuteUpdateMessage.minuteId
-        if (minute_id in self.all_minutes):
-            minute_data = self.all_minutes[minute_id]
-            minute_model = minute_data.get_model()
-            # if minuteID has an associated model, then we tried to persist the message
-            if minute_model is not None:
-                # Since we process messages chronologically, ensure that the referenced minuteID
-                # is also the active chat minute. This will also prevent us from processing
-                # duplicate update minute messages, if any.
-                if minute_model is self.active_minute_stack[-1]:
+        topic_id = message.minuteUpdateMessage.topicId
+
+        # Topic ID must be present in the topic collection
+        if topic_id in self.topics_collection.as_dict():
+            topics = self.topics_collection.as_dict()
+            topic = topics[topic_id]
+            if self.topics_collection.is_leaf_topic(topic):
+                if self.topics_collection.get_next_topic(topic) is None:
                     ret = True
-                else:
-                    print 'Failed to process minute update msg for id=%s'% minute_id
-                    print 'Minute model id is %s' % minute_model.id
-                    print 'The active minute model id is %s' % self.active_minute_stack[-1].id
 
         return ret
 

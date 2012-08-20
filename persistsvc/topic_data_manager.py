@@ -72,6 +72,13 @@ class TopicDataCollection(object):
     def is_leaf_topic(self, topic):
         return topic in self.leaf_topic_list_by_rank
 
+    def is_leaf_topic(self, topic_id):
+        ret = False
+        topic = self.topic_dict.get(topic_id)
+        if topic is not None:
+            ret = topic in self.leaf_topic_list_by_rank
+        return ret
+
     def get_next_topic(self, topic):
         return self._get_next_item(self.topic_list_by_rank, topic)
 
