@@ -52,7 +52,7 @@ class ChatMessageHandler(object):
             ret = self.chat_minute_handler.create_models(message)
             if ret is not None:
                 for model in ret:
-                    self.db_session.add(ret)
+                    self.db_session.add(model)
                 self.db_session.flush() # force a flush so that the chat minute object gets an ID
                 self.chat_minute_handler.set_active_minute(ret[0]) #TODO clean up, make more robust
 
@@ -197,15 +197,15 @@ class ChatMinuteHandler(object):
 
         previous_topic = self.topics_collection.get_previous_topic(topic)
         while previous_topic is not None:
-            previous_topic = self.topics_collection.get_previous_topic(topic)
             minute = self.topic_minute_map[previous_topic.id]
-            if minute.start == DEFAULT_MINUTE_START_TIME:
+            if minute.start == self.DEFAULT_MINUTE_START_TIME:
                 # This topic hasn't been started yet, so start it
                 minute.start = start_time
                 ret.append(minute)
             else:
                 # All prior topics have now been started, so we can stop
                 break
+            previous_topic = self.topics_collection.get_previous_topic(previous_topic)
 
         return ret
 
@@ -217,20 +217,21 @@ class ChatMinuteHandler(object):
 
         # We start at the previous leaf topic because only leaf topics
         # are actually discussed during a chat.
-        previous_leaf = self.topics_collection.get_previous_leaf(topic_id)
+        previous_leaf = self.topics_collection.get_previous_leaf_by_id(topic_id)
         if previous_leaf is not None:
 
             # Update this leaf's end time
-            minute = self.topic_minute_map[topic_id]
+            minute = self.topic_minute_map[previous_leaf.id]
             minute.end = end_time
             ret.append(minute)
 
             # Update parent's end times, if needed
-            parent_topics_to_end = self.minute_end_topic_chain[previous_leaf.id]
-            for topic in parent_topics_to_end:
-                minute = self.topic_minute_map[topic.id]
-                minute.end = end_time
-                ret.append(minute)
+            parent_topics_to_end = self.minute_end_topic_chain.get(previous_leaf.id)
+            if parent_topics_to_end is not None:
+                for topic in parent_topics_to_end:
+                    minute = self.topic_minute_map[topic.id]
+                    minute.end = end_time
+                    ret.append(minute)
 
         return ret
 
@@ -300,9 +301,8 @@ class ChatMinuteHandler(object):
 
         # TODO add timestamp check to ensure it doesn't precede the previous minute?
 
-        topic_id = message.minuteCreateMessage.topicId
-
         # Topic ID must be present in the topic collection
+        topic_id = message.minuteCreateMessage.topicId
         if topic_id in self.topics_collection.as_dict():
 
             # We will only accept minute-create-messages when they pertain to leaf-topics.
@@ -310,7 +310,8 @@ class ChatMinuteHandler(object):
             # the parent minute-create-msg arriving before the child's minute-create-msg).
             # By only allowing minute-create-msgs from leaf topics we can manually create
             # parent chat minutes.
-            if self.topics_collection.is_leaf_topic(topic_id):
+            if self.topics_collection.is_leaf_topic_by_id(topic_id):
+                print 'Valid message %s with topic id %s' % (message.minuteCreateMessage.minuteId, topic_id)
                 ret = True
 
         return ret

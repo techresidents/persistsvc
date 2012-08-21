@@ -20,10 +20,9 @@ class TopicDataManager(object):
         return topic_id
 
     def _get_list_by_rank(self, db_session, root_topic_id):
-        print 'Output from tree manager:'
         topic_list = []
         for sqlalchemy_topic, level in self.manager.tree_by_rank(db_session, root_topic_id):
-            print "%s (%s)" % (sqlalchemy_topic.title, level)
+            #print "%s (%s)" % (sqlalchemy_topic.title, level) TODO log
             topic = TopicData(
                 sqlalchemy_topic.id,
                 sqlalchemy_topic.parent_id,
@@ -72,15 +71,28 @@ class TopicDataCollection(object):
     def is_leaf_topic(self, topic):
         return topic in self.leaf_topic_list_by_rank
 
-    def is_leaf_topic(self, topic_id):
+    def is_leaf_topic_by_id(self, topic_id):
         ret = False
         topic = self.topic_dict.get(topic_id)
         if topic is not None:
-            ret = topic in self.leaf_topic_list_by_rank
+            ret = self.is_leaf_topic(topic)
+        return ret
+
+    def get_next_topic_by_id(self, topic_id):
+        ret = None
+        topic = self.topic_dict.get(topic_id)
+        if topic is not None:
+            ret = self.get_next_topic(topic)
         return ret
 
     def get_next_topic(self, topic):
         return self._get_next_item(self.topic_list_by_rank, topic)
+
+    def get_next_leaf_by_id(self, topic_id):
+        ret = None
+        topic = self.topic_dict.get(topic_id)
+        if topic is not None:
+            ret = self.get_next_leaf(topic)
 
     def get_next_leaf(self, leaf_topic):
         return self._get_next_item(self.leaf_topic_list_by_rank, leaf_topic)
@@ -95,8 +107,22 @@ class TopicDataCollection(object):
                 ret = list[next_index]
         return ret
 
+    def get_previous_topic_by_id(self, topic_id):
+        ret = None
+        topic = self.topic_dict.get(topic_id)
+        if topic is not None:
+            ret = self.get_previous_topic(topic)
+        return ret
+
     def get_previous_topic(self, topic):
         return self._get_previous_item(self.topic_list_by_rank, topic)
+
+    def get_previous_leaf_by_id(self, topic_id):
+        ret = None
+        topic = self.topic_dict.get(topic_id)
+        if topic is not None:
+            ret = self.get_previous_leaf(topic)
+        return ret
 
     def get_previous_leaf(self, leaf_topic):
         return self._get_previous_item(self.leaf_topic_list_by_rank, leaf_topic)
