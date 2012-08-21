@@ -56,11 +56,12 @@ class ChatMessageHandler(object):
                 self.db_session.flush() # force a flush so that the chat minute object gets an ID
                 self.chat_minute_handler.set_active_minute(ret[0]) #TODO clean up, make more robust
 
-#        elif message.header.type == MessageType.MINUTE_UPDATE:
-#            #print 'handling minute update message id=%s' % message.minuteUpdateMessage.minuteId
-#            ret = self.chat_minute_handler.update_model(message)
-#            if ret is not None:
-#                self.db_session.add(ret)
+        elif message.header.type == MessageType.MINUTE_UPDATE:
+            #print 'handling minute update message id=%s' % message.minuteUpdateMessage.minuteId
+            ret = self.chat_minute_handler.update_models(message)
+            if ret is not None:
+                for model in ret:
+                    self.db_session.add(model)
 
 #        elif message.header.type == MessageType.MARKER_CREATE:
 #            print 'handling marker create message id=%s' % message.markerCreateMessage.markerId
@@ -273,15 +274,16 @@ class ChatMinuteHandler(object):
         if self._is_valid_update_message(message):
 
             ret = []
-            topic_id = message.minuteCreateMessage.topicId
+            topic_id = message.minuteUpdateMessage.topicId
             end_time = tz.timestamp_to_utc(message.minuteUpdateMessage.endTimestamp)
 
-            # Update this leaf's end time
+            # Update this final leaf's end time
             minute = self.topic_minute_map[topic_id]
             minute.end = end_time
             ret.append(minute)
 
             # Update parent's end times
+            # Expecting at least the root topic to be updated here
             parent_topics_to_end = self.minute_end_topic_chain[topic_id]
             for topic in parent_topics_to_end:
                 minute = self.topic_minute_map[topic.id]
@@ -327,9 +329,8 @@ class ChatMinuteHandler(object):
         topic_id = message.minuteUpdateMessage.topicId
 
         # Topic ID must be present in the topic collection
-        if topic_id in self.topics_collection.as_dict():
-            topics = self.topics_collection.as_dict()
-            topic = topics[topic_id]
+        topic = self.topics_collection.as_dict().get(topic_id)
+        if topic is not None:
             if self.topics_collection.is_leaf_topic(topic):
                 if self.topics_collection.get_next_topic(topic) is None:
                     ret = True
