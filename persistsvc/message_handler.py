@@ -1,4 +1,4 @@
-import datetime
+import abc
 import logging
 
 from trchatsvc.gen.ttypes import Message, MessageType, MarkerType
@@ -8,6 +8,69 @@ from trpycore.timezone import tz
 
 from topic_data_manager import TopicDataManager, TopicData
 
+
+class MessageHandler(object):
+    """MessageHandler abstract base class.
+
+    Base class for concrete chat message handler implementations.
+    The concrete ChatMessageHandler class processes all ChatMessages
+    and delegates to specific handlers that implement this
+    interface.
+    """
+    __metaclass__ = abc.ABCMeta
+
+    def __init__(
+            self,
+            chat_message_handler):
+        """MessageHandler constructor.
+
+        Args:
+            chat_message_handler: ChatMessageHandler object
+        """
+        self.chat_message_handler = chat_message_handler
+        self.chat_session_id = self.chat_message_handler.chat_session_id
+
+    @abc.abstractmethod
+    def create_models(self, message):
+        """Create model instance(s) from Thrift Message
+
+        Args:
+            message: Deserialized Thrift Message
+
+        Returns:
+            List of models created.
+            None if creation failed.
+            Creation can fail if the input chat message fails to pass biz rules filter.
+        """
+        return
+
+    @abc.abstractmethod
+    def update_models(self, message):
+        """Update model instance(s) from Thrift Message
+
+        Args:
+            message: Deserialized Thrift Message
+
+        Returns:
+            List of models updated.
+            None if update(s) failed.
+            Updates can fail if the input chat message fails to pass biz rules filter.
+        """
+        return
+
+    @abc.abstractmethod
+    def delete_models(self, message):
+        """Delete model instance(s) from Thrift Message
+
+        Args:
+            message: Deserialized Thrift Message
+
+        Returns:
+            List of models deleted.
+            None if deletion(s) failed.
+            Deletions can fail if the input chat message fails to pass biz rules filter.
+        """
+        return
 
 class ChatMessageHandler(object):
     """
@@ -37,7 +100,7 @@ class ChatMessageHandler(object):
 
     def process(self, message):
         """
-            Converts input chat message to a model instance based upon the
+            Converts input deserialized Thrift Message to a model instance based upon the
             chat message's type and persists the created model instance to the db.
 
             This method is the orchestrator of persisting all the chat entities
@@ -45,7 +108,6 @@ class ChatMessageHandler(object):
             return multiple models to be persisted.
         """
         ret = None
-        #TODO sometimes i return a list, other times a single item. Always return list.
 
         if message.header.type == MessageType.MINUTE_CREATE:
             self.log.debug('handling minute create message id=%s' % message.minuteCreateMessage.minuteId)
@@ -69,18 +131,19 @@ class ChatMessageHandler(object):
 
         elif message.header.type == MessageType.TAG_CREATE:
             self.log.debug('handling tag create message id=%s' % message.tagCreateMessage.tagId)
-            ret = self.chat_tag_handler.create_model(message)
+            ret = self.chat_tag_handler.create_models(message)
             if ret is not None:
-                self.db_session.add(ret)
+                for model in ret:
+                    self.db_session.add(model)
 
         elif message.header.type == MessageType.TAG_DELETE:
-            self.log('handling tag delete message id=%s' % message.tagDeleteMessage.tagId)
-            ret = self.chat_tag_handler.delete_model(message)
+            self.log.debug('handling tag delete message id=%s' % message.tagDeleteMessage.tagId)
+            ret = self.chat_tag_handler.delete_models(message)
             if ret is not None:
-                self.db_session.add(ret)
+                for model in ret:
+                    self.db_session.add(model)
 
         return ret
-
 
 class ChatMinuteHandler(object):
     """
@@ -98,6 +161,9 @@ class ChatMinuteHandler(object):
     DEFAULT_MINUTE_START_TIME = 0
 
     def __init__(self, chat_message_handler):
+
+        #TODO no all minutes dict
+
         self.message_handler = chat_message_handler
         self.chat_session_id = chat_message_handler.chat_session_id
         self.topics_collection = chat_message_handler.topics
@@ -376,18 +442,16 @@ class ChatMarkerHandler(object):
         Handler for Chat Marker messages
 
         This class creates model instances
-        from chat marker messages and persists
-        them to the db.
+        from chat marker messages.
 
-        This class is also responsible for
+        This class is responsible for
         defining and applying the business rules to handle
         duplicate messages and filtering unwanted messages.
         """
 
-    # We will only store speaking markers if the user
-    # was speaking for longer than this threshold value.
-    SPEAKING_DURATION_THRESHOLD = 0 # 30 secs in millis
+    SPEAKING_DURATION_THRESHOLD = 0 # Persist all speaking markers
     #TODO Jeff wanted to detect if the current speaking marker was too large
+
 
     def __init__(self, chat_message_handler):
         self.message_handler = chat_message_handler
@@ -401,12 +465,20 @@ class ChatMarkerHandler(object):
 
             Returns None if creation failed.
             Creation can fail if the input message fails to pass biz rules filter.
+
+            The general approach for handling speaking markers is to
+            listen for a speaking-start marker and then wait for
+            the corresponding speaking-end.  All other duplicate speaking-start
+            markers for the specified user will be ignored until the
+            corresponding speaking-end message is received.  The reason
+            this is done because in a chat with 3 users, the two users
+            who are not speaking will generate duplicate speaking marker messages.
         """
         ret = None
 
         if self._is_valid_message(message):
 
-            # Only expecting & handling speaking markers for now
+            # Only expecting & handling speaking markers
 
             # Get user's speaking state
             user_id = message.header.userId
@@ -478,58 +550,100 @@ class ChatMarkerHandler(object):
 
         return ret
 
-class ChatTagHandler(object):
+class ChatTagHandler(MessageHandler):
     """
         Handler for Chat Tag messages
 
         This class creates model instances
-        from chat minute messages and persists
-        them to the db.
+        from chat minute messages.
 
-        This class is also responsible for
+        This class is responsible for
         defining and applying the business rules to handle
         duplicate messages and filtering any unwanted messages.
         """
 
     def __init__(self, chat_message_handler):
-        self.message_handler = chat_message_handler
-        self.chat_session_id = chat_message_handler.chat_session_id
+        super(ChatTagHandler, self).__init__(chat_message_handler)
         self.log = logging.getLogger(__name__)
         self.all_tags = {}
+        self.unique_tags = {}  # Used to ensure only unique tags are persisted (user, minute, tag-name)
 
-    def create_model(self, message):
+    def _update_unique_tags(self, chat_minute, message, deleted=False):
         """
-            Create model instance
+            Store a tag's associated user, minute, and name to ensure uniqueness.
+            We will only store a tag if it is unique when considering these 3 values.
+        """
+        if not deleted:
+            tag_value = str(message.header.userId)+message.tagCreateMessage.name
+            if chat_minute not in self.unique_tags:
+                self.unique_tags[chat_minute] = {}
+            self.unique_tags[chat_minute][message.tagCreateMessage.tagId] = tag_value
+        else:
+            del self.unique_tags[chat_minute][message.tagCreateMessage.tagId]
+        print self.unique_tags
 
-            Returns None if creation failed.
-            Creation can fail if the input message fails to pass biz rules filter.
+    def _is_duplicate_tag(self, chat_minute, message):
+        """
+            Check for duplicate tag by looking at the userID, minute, and tag name
+            together.
+        """
+        ret = False
+        if chat_minute not in self.unique_tags:
+            self.unique_tags[chat_minute] = {}
+        else:
+            tag_value = str(message.header.userId) + message.tagCreateMessage.name
+            if tag_value in self.unique_tags[chat_minute].values():
+                ret = True
+        return ret
+
+    def create_models(self, message):
+        """
+            Create model instance(s)
+
+            Args:
+                message: Deserialized Thrift Message
+
+            Returns:
+                List of models created.
+                None if creation failed.
+                Creation can fail if the input message fails to pass biz rules filter.
         """
         ret = None
 
         # Create the model from the message
         if self._is_valid_create_tag_message(message):
-            chat_minute = self.message_handler.chat_minute_handler.get_active_minute()
+            chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
             ret = ChatTag(
                 user_id=message.header.userId,
                 chat_minute=chat_minute,
                 tag_id=message.tagCreateMessage.tagReferenceId,
                 name=message.tagCreateMessage.name,
                 deleted=False)
+            self._update_unique_tags(chat_minute, message)
 
-        # Store message and its data for easy reference,
-        # (specifically for tagID look-ups on tag delete messages)
+        # Store message and its data for tagID look-ups on tag delete messages.
         tag_data = MessageData(message.tagCreateMessage.tagId, message, ret)
         self.all_tags[tag_data.id] = tag_data
 
+        if ret is not None:
+            ret = [ret]   # Place model in list to comply with MessageHandler interface
+
         return ret
 
-    def delete_model(self, message):
-        """
-            Delete model instance.
+    def update_models(self, message):
+        raise NotImplementedError
 
-            Handles marking a chat tag model for delete.
-            Returns the updated model instance.
-            Returns None if message is invalid.
+    def delete_models(self, message):
+        """
+            Delete model instance(s).
+
+            Args:
+                message: Deserialized Thrift Message
+
+            Returns:
+                Handles marking a chat tag model for delete.
+                Returns the updated model instance.
+                Returns None if message is invalid.
         """
         ret = None
 
@@ -540,6 +654,11 @@ class ChatTagHandler(object):
             tag_model = tag_data.get_model()
             tag_model.deleted = True
             ret = tag_model
+            self._update_unique_tags(
+                self.chat_message_handler.chat_minute_handler.get_active_minute(),
+                message,
+                deleted=True
+            )
 
         # Update state
         if ret is not None:
@@ -549,6 +668,7 @@ class ChatTagHandler(object):
             tag_data = self.all_tags[tag_id]
             tag_data.set_model(ret)
             self.all_tags[tag_id] = tag_data
+            ret = [ret]  # Place model in list to comply with MessageHandler interface
 
         return ret
 
@@ -556,7 +676,7 @@ class ChatTagHandler(object):
         """
             Returns True if message should be persisted, returns False otherwise.
         """
-        ret = False
+        ret = True
 
         # Chat messages are guaranteed to be unique due to the message_id attribute that each
         # chat message possesses.  This means we can avoid a duplicate messageID check here.
@@ -565,10 +685,15 @@ class ChatTagHandler(object):
         tag_id = message.tagCreateMessage.tagId
         if tag_id in self.all_tags:
             self.log.warning('Attempted to create tag with duplicate tagID=%s' % tag_id)
-        else:
-            ret = True
+            ret = False
 
-        # TODO handle exception if tag violates unique together constraint (user, minute, name)
+        # Check if tag violates the unique-together constraint (user, minute, name)
+        # The db will throw an exception if a tag violates this constraint. The reason
+        # we don't simply catch the db exception is because the db throws an 'IntegrityError'
+        # when commit() is invoked on the sql alchemy session, which occurs outside of this class.
+        chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
+        if self._is_duplicate_tag(chat_minute, message):
+            ret = False
 
         return ret
 
