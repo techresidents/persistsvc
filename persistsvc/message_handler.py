@@ -30,8 +30,8 @@ class ChatMessageHandler(object):
         self.topics = topics_manager.get_collection(self.db_session, topic_id)
 
         # Create handlers for each type of message we need to persist
-        self.chat_marker_handler = ChatMarkerHandler()
-        self.chat_minute_handler = ChatMinuteHandler(self.chat_session_id, self.topics)
+        self.chat_marker_handler = ChatMarkerHandler(self)
+        self.chat_minute_handler = ChatMinuteHandler(self)
         self.chat_tag_handler = ChatTagHandler(self)
 
 
@@ -41,43 +41,40 @@ class ChatMessageHandler(object):
             chat message's type and persists the created model instance to the db.
 
             This method is the orchestrator of persisting all the chat entities
-            that need to be stored.  It's assumed that messages that are input
-            are in chronological order. This is to satisfy any ordering dependencies
-            that may exist between the chat messages.
+            that need to be stored.  Some handlers input one message and
+            return multiple models to be persisted.
         """
         ret = None
+        #TODO sometimes i return a list, other times a single item. Always return list.
 
         if message.header.type == MessageType.MINUTE_CREATE:
-            #print 'handling minute create message id=%s' % message.minuteCreateMessage.minuteId
+            self.log.debug('handling minute create message id=%s' % message.minuteCreateMessage.minuteId)
             ret = self.chat_minute_handler.create_models(message)
             if ret is not None:
                 for model in ret:
                     self.db_session.add(model)
 
         elif message.header.type == MessageType.MINUTE_UPDATE:
-            #print 'handling minute update message id=%s' % message.minuteUpdateMessage.minuteId
+            self.log.debug('handling minute update message id=%s' % message.minuteUpdateMessage.minuteId)
             ret = self.chat_minute_handler.update_models(message)
             if ret is not None:
                 for model in ret:
                     self.db_session.add(model)
 
-#        elif message.header.type == MessageType.MARKER_CREATE:
-#            print 'handling marker create message id=%s' % message.markerCreateMessage.markerId
-#            ret = self.chat_marker_handler.create_model(
-#                message,
-#                165) # TODO was testing just speaking markers
-#            # TODO need to handle if there's no active chat minute yet
-#            if ret is not None:
-#                db_session.add(ret)
+        elif message.header.type == MessageType.MARKER_CREATE:
+            self.log.debug('handling marker create message id=%s' % message.markerCreateMessage.markerId)
+            ret = self.chat_marker_handler.create_model(message)
+            if ret is not None:
+                self.db_session.add(ret)
 
         elif message.header.type == MessageType.TAG_CREATE:
-            #print 'handling tag create message id=%s' % message.tagCreateMessage.tagId
+            self.log.debug('handling tag create message id=%s' % message.tagCreateMessage.tagId)
             ret = self.chat_tag_handler.create_model(message)
             if ret is not None:
                 self.db_session.add(ret)
 
         elif message.header.type == MessageType.TAG_DELETE:
-            #print 'handling tag delete message id=%s' % message.tagDeleteMessage.tagId
+            self.log('handling tag delete message id=%s' % message.tagDeleteMessage.tagId)
             ret = self.chat_tag_handler.delete_model(message)
             if ret is not None:
                 self.db_session.add(ret)
@@ -90,23 +87,23 @@ class ChatMinuteHandler(object):
         Handler for Chat Minute messages.
 
         This class creates model instances
-        from chat minute messages and persists
-        them to the db.
+        from chat minute messages.
 
-        This class is also responsible for
+        This class is responsible for
         defining and applying the business rules to handle
         duplicate messages and filtering any unwanted messages.
 
-        This class also maintains the active chat minute.
+        This class also maintains the active chat minute state.
         """
     DEFAULT_MINUTE_START_TIME = 0
 
-    def __init__(self, chat_session_id, topics_collection):
-        self.chat_session_id = chat_session_id
-        self.topics_collection = topics_collection
+    def __init__(self, chat_message_handler):
+        self.message_handler = chat_message_handler
+        self.chat_session_id = chat_message_handler.chat_session_id
+        self.topics_collection = chat_message_handler.topics
         self.log = logging.getLogger(__name__)
         self.active_minute = None
-        self.minute_end_topic_chain = self._get_chat_minute_end_topic_chain(topics_collection)
+        self.minute_end_topic_chain = self._get_chat_minute_end_topic_chain(self.topics_collection)
 
         self.topic_minute_map = {}
         for topic in self.topics_collection.as_list_by_rank():
@@ -124,7 +121,18 @@ class ChatMinuteHandler(object):
             highest relative rank amongst their siblings.
 
             The leafs returned from this method will be responsible
-            for potentially closing their parent's chat minutes.
+            for closing their parent's chat minutes.
+
+            As a simple example, consider the following topic hierarchy:
+
+                Root
+                    Topic1
+                    Topic2
+                        Topic3
+                    Topic4
+
+                The highest ranked leafs here are:
+                [Topic3, Topic4]
         """
         ret = []
         leaf_list = topics_collection.get_leaf_list_by_rank()
@@ -174,17 +182,26 @@ class ChatMinuteHandler(object):
         return minute_end_topic_chain
 
     def _set_active_minute(self, chat_minute):
-        # We set the active minute via this method so that we can
-        # set the active after the db_session has been flushed.
+        """
+            The Chat Minute Handler class is responsible for
+            setting the active minute using this method.
+        """
         self.active_minute = chat_minute
 
     def get_active_minute(self):
-        # The active minute is the last minute added to the stack
+        """
+            Returns the active chat minute.
+        """
         return self.active_minute
 
     def _start_parent_topic_minutes(self, topic_id, start_time):
         """
-            Method responsible for starting any parent topics
+            Method responsible for setting the start timestamp on
+            parent topic chat minutes.
+
+            This method will traverse backward through the ordered
+            topic list (ordered by increasing rank (1,2,etc)) starting
+            at the topic passed in, and start any parent topics
             that have not yet been started.
         """
         ret = []
@@ -207,7 +224,11 @@ class ChatMinuteHandler(object):
 
     def _end_previous_topic_minutes(self, topic_id, end_time):
         """
-            Method responsible for ending the previous topic(s).
+            Method responsible for setting the end timestamp on
+            chat minutes.
+
+            This method will find the topics that need
+            to be closed by keying off of the input topic.
         """
         ret = []
 
@@ -233,7 +254,7 @@ class ChatMinuteHandler(object):
 
     def create_models(self, message):
         """
-            Create model instance from Thrift Message
+            Create model instance(s) from Thrift Message
 
             Returns None if creation failed.
             Creation can fail if the input message fails to pass biz rules filter.
@@ -264,6 +285,24 @@ class ChatMinuteHandler(object):
         return ret
 
     def update_models(self, message):
+        """
+            Update model instance(s) from Thrift Message
+
+            This method is responsible for listening for a
+            MinuteUpdateMessage on the last topic in a chat.
+            Once received, this method will generate an
+            end-timestamps for the ChatMinute's that require it
+            (the root topic and any parents of the final topic).
+
+            Note that for all other topics, the end-timestamps
+            are written when a new minuteCreateMessage comes in.
+            The reason that messages are processed this
+            way is that the message order of minuteStart and minuteEnd
+            messages was not guaranteed to be in chronological order
+            since the timestamps between these successive messages
+            was so close in time (any network latency in one message
+            but not the other was enough to change the order).
+        """
 
         ret = None
 
@@ -350,12 +389,13 @@ class ChatMarkerHandler(object):
     SPEAKING_DURATION_THRESHOLD = 0 # 30 secs in millis
     #TODO Jeff wanted to detect if the current speaking marker was too large
 
-    def __init__(self):
+    def __init__(self, chat_message_handler):
+        self.message_handler = chat_message_handler
         self.log = logging.getLogger(__name__)
         self.all_markers = {}
         self.speaking_state = {}
 
-    def create_model(self, message, chat_minute_id):
+    def create_model(self, message):
         """
             Create model instance
 
@@ -381,7 +421,9 @@ class ChatMarkerHandler(object):
                 # msg indicates user started speaking
                 if not user_speaking_data.is_speaking():
                     # If user wasn't already speaking, process msg.
-                    # Ignore duplicate speaking_start markers.
+                    # Ignore duplicate speaking_start markers. Once the first speaking start
+                    # message is processed, we will ignore the rest until we receive a speaking
+                    # end message.
                     user_speaking_data.set_start_timestamp(message.header.timestamp)
                     user_speaking_data.set_speaking(True)
             else:
@@ -390,14 +432,20 @@ class ChatMarkerHandler(object):
                     # If user was already speaking, process msg.
                     # Ignore duplicate speaking_end markers.
                     user_speaking_data.set_end_timestamp(message.header.timestamp)
+
+                    # Only persist speaking markers with significant duration
                     duration = user_speaking_data.calculate_speaking_duration()
-                    if duration > SPEAKING_DURATION_THRESHOLD:
-                        # Only persist speaking markers with significant duration
-                        ret = ChatSpeakingMarker(
-                            user_id=user_id,
-                            chat_minute_id=chat_minute_id,
-                            start=user_speaking_data.get_start_timestamp(),
-                            end=user_speaking_data.get_end_timestamp())
+                    if duration > self.SPEAKING_DURATION_THRESHOLD:
+                        chat_minute = self.message_handler.chat_minute_handler.get_active_minute()
+                        if chat_minute is not None:
+                            # TODO need to handle if there's no active chat minute yet?
+                            start_time = tz.timestamp_to_utc(user_speaking_data.get_start_timestamp())
+                            end_time = tz.timestamp_to_utc(user_speaking_data.get_end_timestamp())
+                            ret = ChatSpeakingMarker(
+                                user_id=user_id,
+                                chat_minute=chat_minute,
+                                start=start_time,
+                                end=end_time)
                     # Reset user's speaking state
                     user_speaking_data.set_start_timestamp(None)
                     user_speaking_data.set_end_timestamp(None)
@@ -405,7 +453,6 @@ class ChatMarkerHandler(object):
 
             # Update state
             self.speaking_state[user_id] = user_speaking_data
-            persist_marker = False
 
         # Store message and its data for easy reference
         marker_data = MessageData(message.markerCreateMessage.markerId, message, ret)
@@ -518,10 +565,11 @@ class ChatTagHandler(object):
         tag_id = message.tagCreateMessage.tagId
         if tag_id in self.all_tags:
             self.log.warning('Attempted to create tag with duplicate tagID=%s' % tag_id)
-            return ret
+        else:
+            ret = True
 
         # TODO handle exception if tag violates unique together constraint (user, minute, name)
-        ret = True
+
         return ret
 
     def _is_valid_delete_tag_message(self, message):
@@ -572,15 +620,15 @@ class SpeakingData(object):
     """
     def __init__(self, user_id, is_speaking=False, start_timestamp=None, end_timestamp=None):
         self.user_id = user_id
-        self.is_speaking=is_speaking
+        self.is_actively_speaking=is_speaking
         self.start = start_timestamp
         self.end = end_timestamp
 
     def set_speaking(self, is_speaking):
-        self.is_speaking = is_speaking
+        self.is_actively_speaking = is_speaking
 
     def is_speaking(self):
-        return self.is_speaking
+        return self.is_actively_speaking
 
     def set_start_timestamp(self, start):
         self.start = start
@@ -598,5 +646,5 @@ class SpeakingData(object):
         ret = 0
         if (self.start is not None and
             self.end is not None):
-            ret = end-start
+            ret = self.end - self.start
         return ret
