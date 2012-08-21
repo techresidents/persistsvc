@@ -32,7 +32,7 @@ class ChatMessageHandler(object):
         # Create handlers for each type of message we need to persist
         self.chat_marker_handler = ChatMarkerHandler()
         self.chat_minute_handler = ChatMinuteHandler(self.chat_session_id, self.topics)
-        self.chat_tag_handler = ChatTagHandler(self.chat_session_id)
+        self.chat_tag_handler = ChatTagHandler(self)
 
 
     def process(self, message):
@@ -53,8 +53,6 @@ class ChatMessageHandler(object):
             if ret is not None:
                 for model in ret:
                     self.db_session.add(model)
-                self.db_session.flush() # force a flush so that the chat minute object gets an ID
-                self.chat_minute_handler.set_active_minute(ret[0]) #TODO clean up, make more robust
 
         elif message.header.type == MessageType.MINUTE_UPDATE:
             #print 'handling minute update message id=%s' % message.minuteUpdateMessage.minuteId
@@ -72,19 +70,17 @@ class ChatMessageHandler(object):
 #            if ret is not None:
 #                db_session.add(ret)
 
-#        elif message.header.type == MessageType.TAG_CREATE:
-#            #print 'handling tag create message id=%s' % message.tagCreateMessage.tagId
-#            ret = self.chat_tag_handler.create_model(
-#                message,
-#                self.chat_minute_handler.get_active_minute().id)
-#            if ret is not None:
-#                self.db_session.add(ret)
-#
-#        elif message.header.type == MessageType.TAG_DELETE:
-#            #print 'handling tag delete message id=%s' % message.tagDeleteMessage.tagId
-#            ret = self.chat_tag_handler.delete_model(message)
-#            if ret is not None:
-#                self.db_session.add(ret)
+        elif message.header.type == MessageType.TAG_CREATE:
+            #print 'handling tag create message id=%s' % message.tagCreateMessage.tagId
+            ret = self.chat_tag_handler.create_model(message)
+            if ret is not None:
+                self.db_session.add(ret)
+
+        elif message.header.type == MessageType.TAG_DELETE:
+            #print 'handling tag delete message id=%s' % message.tagDeleteMessage.tagId
+            ret = self.chat_tag_handler.delete_model(message)
+            if ret is not None:
+                self.db_session.add(ret)
 
         return ret
 
@@ -177,11 +173,10 @@ class ChatMinuteHandler(object):
 
         return minute_end_topic_chain
 
-    def set_active_minute(self, chat_minute):
+    def _set_active_minute(self, chat_minute):
         # We set the active minute via this method so that we can
         # set the active after the db_session has been flushed.
         self.active_minute = chat_minute
-        self.log.debug('The new active chat minute id=%s' % chat_minute.id)
 
     def get_active_minute(self):
         # The active minute is the last minute added to the stack
@@ -256,6 +251,7 @@ class ChatMinuteHandler(object):
             minute = self.topic_minute_map[topic_id]
             minute.start = start_time
             ret.append(minute)
+            self._set_active_minute(minute)
 
             # Update parent topic's start time
             models = self._start_parent_topic_minutes(topic_id, start_time)
@@ -313,7 +309,6 @@ class ChatMinuteHandler(object):
             # By only allowing minute-create-msgs from leaf topics we can manually create
             # parent chat minutes.
             if self.topics_collection.is_leaf_topic_by_id(topic_id):
-                print 'Valid message %s with topic id %s' % (message.minuteCreateMessage.minuteId, topic_id)
                 ret = True
 
         return ret
@@ -449,12 +444,13 @@ class ChatTagHandler(object):
         duplicate messages and filtering any unwanted messages.
         """
 
-    def __init__(self, chat_session_id):
-        self.chat_session_id = chat_session_id
+    def __init__(self, chat_message_handler):
+        self.message_handler = chat_message_handler
+        self.chat_session_id = chat_message_handler.chat_session_id
         self.log = logging.getLogger(__name__)
         self.all_tags = {}
 
-    def create_model(self, message, chat_minute_id):
+    def create_model(self, message):
         """
             Create model instance
 
@@ -465,9 +461,10 @@ class ChatTagHandler(object):
 
         # Create the model from the message
         if self._is_valid_create_tag_message(message):
+            chat_minute = self.message_handler.chat_minute_handler.get_active_minute()
             ret = ChatTag(
                 user_id=message.header.userId,
-                chat_minute_id=chat_minute_id,
+                chat_minute=chat_minute,
                 tag_id=message.tagCreateMessage.tagReferenceId,
                 name=message.tagCreateMessage.name,
                 deleted=False)
