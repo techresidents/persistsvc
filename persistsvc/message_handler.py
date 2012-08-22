@@ -6,8 +6,6 @@ from trsvcscore.db.models import ChatMinute, ChatSpeakingMarker,\
     ChatTag
 from trpycore.timezone import tz
 
-from topic_data_manager import TopicDataManager, TopicData
-
 
 class MessageHandler(object):
     """MessageHandler abstract base class.
@@ -82,15 +80,10 @@ class ChatMessageHandler(object):
             2) Creating model instances from chat messages
             3) Persisting model instances
     """
-    def __init__(self, db_session, chat_session_id):
+    def __init__(self, chat_session_id, topics_collection):
         self.log = logging.getLogger(__name__)
-        self.db_session = db_session
         self.chat_session_id = chat_session_id
-
-        # Generate list of topics
-        topics_manager = TopicDataManager()
-        topic_id = topics_manager.get_root_topic_id(self.db_session, self.chat_session_id)
-        self.topics = topics_manager.get_collection(self.db_session, topic_id)
+        self.topics_collection = topics_collection
 
         # Create handlers for each type of message we need to persist
         self.chat_marker_handler = ChatMarkerHandler(self)
@@ -112,36 +105,21 @@ class ChatMessageHandler(object):
         if message.header.type == MessageType.MINUTE_CREATE:
             self.log.debug('handling minute create message id=%s' % message.minuteCreateMessage.minuteId)
             ret = self.chat_minute_handler.create_models(message)
-            if ret is not None:
-                for model in ret:
-                    self.db_session.add(model)
 
         elif message.header.type == MessageType.MINUTE_UPDATE:
             self.log.debug('handling minute update message id=%s' % message.minuteUpdateMessage.minuteId)
             ret = self.chat_minute_handler.update_models(message)
-            if ret is not None:
-                for model in ret:
-                    self.db_session.add(model)
 
         elif message.header.type == MessageType.MARKER_CREATE:
             self.log.debug('handling marker create message id=%s' % message.markerCreateMessage.markerId)
-            ret = self.chat_marker_handler.create_model(message)
-            if ret is not None:
-                self.db_session.add(ret)
 
         elif message.header.type == MessageType.TAG_CREATE:
             self.log.debug('handling tag create message id=%s' % message.tagCreateMessage.tagId)
             ret = self.chat_tag_handler.create_models(message)
-            if ret is not None:
-                for model in ret:
-                    self.db_session.add(model)
 
         elif message.header.type == MessageType.TAG_DELETE:
             self.log.debug('handling tag delete message id=%s' % message.tagDeleteMessage.tagId)
             ret = self.chat_tag_handler.delete_models(message)
-            if ret is not None:
-                for model in ret:
-                    self.db_session.add(model)
 
         return ret
 
@@ -166,7 +144,7 @@ class ChatMinuteHandler(object):
 
         self.message_handler = chat_message_handler
         self.chat_session_id = chat_message_handler.chat_session_id
-        self.topics_collection = chat_message_handler.topics
+        self.topics_collection = chat_message_handler.topics_collection
         self.log = logging.getLogger(__name__)
         self.active_minute = None
         self.minute_end_topic_chain = self._get_chat_minute_end_topic_chain(self.topics_collection)
@@ -588,7 +566,6 @@ class ChatTagHandler(MessageHandler):
             self.unique_tags[chat_minute][message.tagCreateMessage.tagId] = tag_value
         else:
             del self.unique_tags[chat_minute][message.tagDeleteMessage.tagId]
-        print self.unique_tags
 
     def _is_duplicate_tag(self, chat_minute, message):
         """

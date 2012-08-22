@@ -17,6 +17,7 @@ from trsvcscore.db.models import ChatPersistJob, ChatMessage, ChatMessageFormatT
 from cache import ChatMessageCache
 from mapper import ChatMessageMapper
 from message_handler import ChatMessageHandler
+from topic_data_manager import TopicDataManager
 
 import settings
 
@@ -171,11 +172,18 @@ class ChatPersister(object):
                 deserialize(deserialized_msg, chat_message.data)
                 deserialized_chat_msgs.append(deserialized_msg)
 
+            # Generate topics collection for this chat
+            topics_manager = TopicDataManager()
+            topic_id = topics_manager.get_root_topic_id(db_session, self.chat_session_id)
+            topics_collection = topics_manager.get_collection(db_session, topic_id)
+
             # Process the deserialized chat messages
-            handler = ChatMessageHandler(db_session, self.chat_session_id)
+            handler = ChatMessageHandler(self.chat_session_id, topics_collection)
             for message in deserialized_chat_msgs:
-                print message.header.type
-                handler.process(message)
+                ret = handler.process(message)
+                if ret is not None:
+                    for model in ret:
+                        db_session.add(model)
 
             # commit all db changes
             db_session.commit()
