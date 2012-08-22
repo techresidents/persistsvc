@@ -569,14 +569,16 @@ class ChatTagHandler(MessageHandler):
 
         # Create nested dict to ensure only unique tags are persisted.
         # Tags are considered unique across (user, minute, tag-name)
-        # The tagID is needed here to perform lookups if tag is deleted.
-        # {chat_minute : { tagId : userID+tagName}
+        # The tagID is needed here to perform lookups if a tag is deleted.
+        # {chat_minute : { tagId : userID+tagName
+        #                  tagId: userID+tagName}
         self.unique_tags = {}
 
     def _update_unique_tags(self, chat_minute, message, deleted=False):
         """
             Store a tag's associated user, minute, and name to ensure uniqueness.
-            We will only store a tag if it is unique when considering these 3 values.
+            We will only store a tag if it is unique when considering these
+            three values together.
         """
         if not deleted:
             # Storing the tag as the concatenation of userID and tag name.
