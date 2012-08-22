@@ -566,7 +566,12 @@ class ChatTagHandler(MessageHandler):
         super(ChatTagHandler, self).__init__(chat_message_handler)
         self.log = logging.getLogger(__name__)
         self.all_tags = {}
-        self.unique_tags = {}  # Used to ensure only unique tags are persisted (user, minute, tag-name)
+
+        # Create nested dict to ensure only unique tags are persisted.
+        # Tags are considered unique across (user, minute, tag-name)
+        # The tagID is needed here to perform lookups if tag is deleted.
+        # {chat_minute : { tagId : userID+tagName}
+        self.unique_tags = {}
 
     def _update_unique_tags(self, chat_minute, message, deleted=False):
         """
@@ -574,12 +579,13 @@ class ChatTagHandler(MessageHandler):
             We will only store a tag if it is unique when considering these 3 values.
         """
         if not deleted:
+            # Storing the tag as the concatenation of userID and tag name.
             tag_value = str(message.header.userId)+message.tagCreateMessage.name
             if chat_minute not in self.unique_tags:
                 self.unique_tags[chat_minute] = {}
             self.unique_tags[chat_minute][message.tagCreateMessage.tagId] = tag_value
         else:
-            del self.unique_tags[chat_minute][message.tagCreateMessage.tagId]
+            del self.unique_tags[chat_minute][message.tagDeleteMessage.tagId]
         print self.unique_tags
 
     def _is_duplicate_tag(self, chat_minute, message):
