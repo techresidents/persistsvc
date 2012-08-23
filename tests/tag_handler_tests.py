@@ -32,14 +32,14 @@ class ChatTagHandlerTest(IntegrationTestCase):
 
         IntegrationTestCase.setUpClass()
 
+        # Data required to construct a ChatMessageHandler
         topic_data = TopicTestDataSets()
         test_topic_datasets = topic_data.get_list()
         cls.topic_collection = test_topic_datasets[0].topic_collection
         cls.chat_session_id = 51411 # Random ID
         cls.db_session = cls.service.handler.get_database_session()
 
-
-        # Chat #1
+        # Deserialized Chat Messages from real Chat
         m1 = Message(tagCreateMessage=None, minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='1_MX4xNTg4OTk5MX4xMjcuMC4wLjF-V2VkIEF1ZyAyMiAwNjo1ODoyNSBQRFQgMjAxMn4wLjg5Mjc3OTJ-', timestamp=1345643917.544588, route=MessageRoute(type=0, recipients=[]), userId=13, type=400, id='b64efda139224cdc9e8b2248fdf49117'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=MarkerCreateMessage(marker=Marker(publishingMarker=None, speakingMarker=None, connectedMarker=None, endedMarker=None, joinedMarker=JoinedMarker(userId=13, name='brian'), startedMarker=None, type=0), markerId='68819105102c4fdd8dffcce983d34f76'), whiteboardCreatePathMessage=None)
         m2 = Message(tagCreateMessage=None, minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='1_MX4xNTg4OTk5MX4xMjcuMC4wLjF-V2VkIEF1ZyAyMiAwNjo1ODoyNSBQRFQgMjAxMn4wLjg5Mjc3OTJ-', timestamp=1345643917.847823, route=MessageRoute(type=1, recipients=[]), userId=13, type=200, id='096a9f1f54984e079ef45c3f07f21ed3'), tagDeleteMessage=None, whiteboardCreateMessage=WhiteboardCreateMessage(name='Default Whiteboard', whiteboardId='d74b1bd64a4a48909e3c727299b7ab8c'), whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
         m3 = Message(tagCreateMessage=None, minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='1_MX4xNTg4OTk5MX4xMjcuMC4wLjF-V2VkIEF1ZyAyMiAwNjo1ODoyNSBQRFQgMjAxMn4wLjg5Mjc3OTJ-', timestamp=1345643921.425069, route=MessageRoute(type=0, recipients=[]), userId=13, type=400, id='6a683f85bcf54ce0a1fad423317a030b'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=MarkerCreateMessage(marker=Marker(publishingMarker=None, speakingMarker=None, connectedMarker=ConnectedMarker(userId=13, isConnected=True), endedMarker=None, joinedMarker=None, startedMarker=None, type=1), markerId='9acbd831c59e4461b58d6218d68443ef'), whiteboardCreatePathMessage=None)
@@ -48,9 +48,7 @@ class ChatTagHandlerTest(IntegrationTestCase):
         m6 = Message(tagCreateMessage=None, minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='1_MX4xNTg4OTk5MX4xMjcuMC4wLjF-V2VkIEF1ZyAyMiAwNjo1ODoyNSBQRFQgMjAxMn4wLjg5Mjc3OTJ-', timestamp=1345643927.934734, route=MessageRoute(type=0, recipients=[]), userId=13, type=400, id='2d344bec420c4b11a4f7bdb2d63de2a4'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=MarkerCreateMessage(marker=Marker(publishingMarker=None, speakingMarker=None, connectedMarker=None, endedMarker=None, joinedMarker=None, startedMarker=StartedMarker(userId=13), type=4), markerId='652270426d064f4da8069d7f5f39846e'), whiteboardCreatePathMessage=None)
         cls.m7 = Message(tagCreateMessage=TagCreateMessage(tagId='4141decbb6f44471939149d6bc801700', name='Tag', tagReferenceId=None, minuteId='6350813013bd4472b9ef5366fca0b434'), minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='1_MX4xNTg4OTk5MX4xMjcuMC4wLjF-V2VkIEF1ZyAyMiAwNjo1ODoyNSBQRFQgMjAxMn4wLjg5Mjc3OTJ-', timestamp=1345643936.348819, route=MessageRoute(type=1, recipients=[]), userId=13, type=100, id='7f577979990945efa0b41ab887155a1d'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
         cls.m8 = Message(tagCreateMessage=TagCreateMessage(tagId='80821d7947a545aa86b3ef4400a4749c', name='deletedTag', tagReferenceId=None, minuteId='6350813013bd4472b9ef5366fca0b434'), minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='1_MX4xNTg4OTk5MX4xMjcuMC4wLjF-V2VkIEF1ZyAyMiAwNjo1ODoyNSBQRFQgMjAxMn4wLjg5Mjc3OTJ-', timestamp=1345643943.648114, route=MessageRoute(type=1, recipients=[]), userId=13, type=100, id='13a5a7d1eaad469a8bb8603ee580b3e1'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
-
         cls.m9 = Message(tagCreateMessage=None, minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='1_MX4xNTg4OTk5MX4xMjcuMC4wLjF-V2VkIEF1ZyAyMiAwNjo1ODoyNSBQRFQgMjAxMn4wLjg5Mjc3OTJ-', timestamp=1345643948.168495, route=MessageRoute(type=1, recipients=[]), userId=13, type=101, id='79e315e656fd4d56b348ea7472412ab5'), tagDeleteMessage=TagDeleteMessage(tagId='80821d7947a545aa86b3ef4400a4749c'), whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
-
         cls.m10 = Message(tagCreateMessage=TagCreateMessage(tagId='b5e8a3b469e04fd883a2c9ee9f527e1b', name='duplicate tag', tagReferenceId=None, minuteId='6350813013bd4472b9ef5366fca0b434'), minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='1_MX4xNTg4OTk5MX4xMjcuMC4wLjF-V2VkIEF1ZyAyMiAwNjo1ODoyNSBQRFQgMjAxMn4wLjg5Mjc3OTJ-', timestamp=1345643953.358221, route=MessageRoute(type=1, recipients=[]), userId=13, type=100, id='667e7f48a9f74058a26445e283c3482c'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
         cls.m11 = Message(tagCreateMessage=TagCreateMessage(tagId='35ffbbc263fe41879b83df27a328f3c2', name='duplicate tag', tagReferenceId=None, minuteId='6350813013bd4472b9ef5366fca0b434'), minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='1_MX4xNTg4OTk5MX4xMjcuMC4wLjF-V2VkIEF1ZyAyMiAwNjo1ODoyNSBQRFQgMjAxMn4wLjg5Mjc3OTJ-', timestamp=1345643957.397479, route=MessageRoute(type=1, recipients=[]), userId=13, type=100, id='b24bbcc26432461bb72b70823dcbf67e'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
         m12 = Message(tagCreateMessage=None, minuteUpdateMessage=MinuteUpdateMessage(topicId=2, startTimestamp=1345643927, endTimestamp=1345643963, minuteId='6350813013bd4472b9ef5366fca0b434'), whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='1_MX4xNTg4OTk5MX4xMjcuMC4wLjF-V2VkIEF1ZyAyMiAwNjo1ODoyNSBQRFQgMjAxMn4wLjg5Mjc3OTJ-', timestamp=1345643963.615939, route=MessageRoute(type=1, recipients=[]), userId=13, type=301, id='719ced197ae94e75b1cbde6881fa79de'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
@@ -58,36 +56,117 @@ class ChatTagHandlerTest(IntegrationTestCase):
         m14 = Message(tagCreateMessage=None, minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='1_MX4xNTg4OTk5MX4xMjcuMC4wLjF-V2VkIEF1ZyAyMiAwNjo1ODoyNSBQRFQgMjAxMn4wLjg5Mjc3OTJ-', timestamp=1345643964.04311, route=MessageRoute(type=0, recipients=[]), userId=13, type=400, id='c375ef54d7774768bb1c888478b4b906'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=MarkerCreateMessage(marker=Marker(publishingMarker=None, speakingMarker=None, connectedMarker=None, endedMarker=EndedMarker(userId=13), joinedMarker=None, startedMarker=None, type=5), markerId='4c862ffda41c4925be232a6fcb6fda26'), whiteboardCreatePathMessage=None)
         cls.chat1 = [m1, m2, m3, m4, m5, m6, cls.m7, cls.m8, cls.m9, cls.m10, cls.m11, m12, m13, m14]
 
-        # Create and set chat minute
-        chat_minute_start = tz.timestamp_to_utc(1345643927)
-        chat_minute_end = tz.timestamp_to_utc(1345643963)
+        # Dummy ChatMinutes
         cls.chat_minute = ChatMinute(
             chat_session_id=cls.chat_session_id,
             topic_id=1,
-            start=chat_minute_start,
-            end=chat_minute_end)
+            start=tz.timestamp_to_utc(1345643927),
+            end = tz.timestamp_to_utc(1345643963))
+        cls.chat_minute_2 = ChatMinute(
+            chat_session_id=cls.chat_session_id,
+            topic_id=2,
+            start=tz.timestamp_to_utc(1345643963),
+            end = tz.timestamp_to_utc(1345643999))
+
 
     @classmethod
     def tearDownClass(cls):
         IntegrationTestCase.tearDownClass()
 
 
-    def test_fullChat(self):
+
+    def test_chatMessageHandler(self):
+
+        # Create ChatTagHandler
+        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
+
+        # Specify expected output
+        persisted_tag_messages = [self.m7, self.m8, self.m9, self.m10] #self.m11 is a duplicate tag which isn't persisted
+        tag_create_messages = []
+        expected_tag_models = []
+        for message in persisted_tag_messages:
+            if message.tagCreateMessage is not None:
+                tag_create_messages.append(message)
+                expected_tag = ChatTag(
+                    user_id=message.header.userId,
+                    chat_minute=self.chat_minute, #placeholder chat minute
+                    tag_id=message.tagCreateMessage.tagReferenceId,
+                    name=message.tagCreateMessage.name,
+                    deleted=False)
+            else:
+                # Need to look up tag name by tag_id
+                tag_id = message.tagDeleteMessage.tagId
+                tag_name = None
+                for create_msg in tag_create_messages:
+                    if tag_id == create_msg.tagCreateMessage.tagId:
+                        tag_name = create_msg.tagCreateMessage.name
+                self.assertIsNotNone(tag_name)
+
+                expected_tag = ChatTag(
+                    user_id=message.header.userId,
+                    chat_minute=self.chat_minute, #placeholder chat minute
+                    tag_id=tag_id,
+                    name=tag_name,
+                    deleted=True)
+
+            # Update expected output list
+            expected_tag_models.append(expected_tag)
+
+        # Process messages
+        tag_models = []
+        for deserialized_msg in self.chat1:
+            models = message_handler.process(deserialized_msg)
+            if models is not None:
+                for model in models:
+                    if isinstance(model, ChatTag):
+                        tag_models.append(model)
+
+                        # Update minute model refs of expected output
+                        index = len(tag_models)-1
+                        expected_model = expected_tag_models[index]
+                        expected_model.chat_minute = message_handler.chat_minute_handler.get_active_minute()
+                        expected_tag_models[index] = expected_model
+
+        # Compare output to expected values
+        for (counter, actual_tag) in enumerate(tag_models):
+            # counter values start at 0
+            fail_msg = 'Failed with loop counter=%d' % counter
+            self.assertEqual(expected_tag_models[counter].user_id, actual_tag.user_id, fail_msg)
+            self.assertEqual(expected_tag_models[counter].chat_minute, actual_tag.chat_minute, fail_msg)
+            self.assertEqual(expected_tag_models[counter].tag_id, actual_tag.tag_id, fail_msg)
+            self.assertEqual(expected_tag_models[counter].name, actual_tag.name, fail_msg)
+            self.assertEqual(expected_tag_models[counter].deleted, actual_tag.deleted, fail_msg)
+
+    def test_createModels_singleTag(self):
 
         # Create ChatTagHandler
         message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
         message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
         tag_handler = message_handler.chat_tag_handler
 
-        expectedTagModels = []
-        createdTagModels = []
-        for deserialized_msg in self.chat1:
-            message_handler.process(deserialized_msg)
-            # nothing has been committed yet
+        # Expected ChatTag
+        message = self.m7
+        expected_tag = ChatTag(
+            user_id=message.header.userId,
+            chat_minute=self.chat_minute,
+            tag_id=message.tagCreateMessage.tagReferenceId,
+            name=message.tagCreateMessage.name,
+            deleted=False)
 
-        self.assertEqual(expectedTagModels, createdTagModels)
+        # Create the real ChatTag
+        created_tags = tag_handler.create_models(message)
+        self.assertEqual(1, len(created_tags))
+        actual_tag = created_tags[0]
 
-    def test_createModels(self):
+        # Compare output to expected values
+        #self.assertEqual(expected_tag, actual_tag) # TODO why fails?
+        self.assertEqual(expected_tag.user_id, actual_tag.user_id)
+        self.assertEqual(expected_tag.chat_minute, actual_tag.chat_minute)
+        self.assertEqual(expected_tag.tag_id, actual_tag.tag_id)
+        self.assertEqual(expected_tag.name, actual_tag.name)
+        self.assertEqual(expected_tag.deleted, actual_tag.deleted)
+
+    def test_createModels_duplicateTags(self):
 
         # Create ChatTagHandler
         message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
@@ -114,6 +193,60 @@ class ChatTagHandlerTest(IntegrationTestCase):
         self.assertEqual(expected_tag.tag_id, actual_tag.tag_id)
         self.assertEqual(expected_tag.name, actual_tag.name)
         self.assertEqual(expected_tag.deleted, actual_tag.deleted)
+
+        # Create a duplicate ChatTag - same user, chat_minute, and tag name
+        created_tags = tag_handler.create_models(message)
+        self.assertIsNone(created_tags)
+
+    def test_createModels_sameUserSameTagNameDifferentMinute(self):
+
+        # Create ChatTagHandler
+        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
+        tag_handler = message_handler.chat_tag_handler
+
+        # Expected ChatTag
+        message = self.m10
+        expected_tag1 = ChatTag(
+            user_id=message.header.userId,
+            chat_minute=self.chat_minute,
+            tag_id=message.tagCreateMessage.tagReferenceId,
+            name=message.tagCreateMessage.name,
+            deleted=False)
+
+        # Create the real ChatTag
+        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
+        created_tags1 = tag_handler.create_models(message)
+        self.assertEqual(1, len(created_tags1))
+        actual_tag1 = created_tags1[0]
+
+        # Compare output to expected values
+        self.assertEqual(expected_tag1.user_id, actual_tag1.user_id)
+        self.assertEqual(expected_tag1.chat_minute, actual_tag1.chat_minute)
+        self.assertEqual(expected_tag1.tag_id, actual_tag1.tag_id)
+        self.assertEqual(expected_tag1.name, actual_tag1.name)
+        self.assertEqual(expected_tag1.deleted, actual_tag1.deleted)
+
+        # Expected ChatTag
+        message = self.m11
+        expected_tag2 = ChatTag(
+            user_id=message.header.userId,
+            chat_minute=self.chat_minute_2,  #Different ChatMinute than 1st Tag
+            tag_id=message.tagCreateMessage.tagReferenceId,
+            name=message.tagCreateMessage.name,
+            deleted=False)
+
+        # Create the real ChatTag
+        message_handler.chat_minute_handler._set_active_minute(self.chat_minute_2)
+        created_tags2 = tag_handler.create_models(message)
+        self.assertEqual(1, len(created_tags2))
+        actual_tag2 = created_tags2[0]
+
+        # Compare output to expected values
+        self.assertEqual(expected_tag2.user_id, actual_tag2.user_id)
+        self.assertEqual(expected_tag2.chat_minute, actual_tag2.chat_minute)
+        self.assertEqual(expected_tag2.tag_id, actual_tag2.tag_id)
+        self.assertEqual(expected_tag2.name, actual_tag2.name)
+        self.assertEqual(expected_tag2.deleted, actual_tag2.deleted)
 
     def test_updateModels(self):
 

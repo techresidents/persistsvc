@@ -672,11 +672,15 @@ class ChatTagHandler(MessageHandler):
             self.log.warning('Attempted to create tag with duplicate tagID=%s' % tag_id)
             ret = False
 
+        # If there is no active ChatMinute then reject this message
+        chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
+        if chat_minute is None:
+            ret = False
+
         # Check if tag violates the unique-together constraint (user, minute, name)
         # The db will throw an exception if a tag violates this constraint. The reason
         # we don't simply catch the db exception is because the db throws an 'IntegrityError'
         # when commit() is invoked on the sql alchemy session, which occurs outside of this class.
-        chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
         if self._is_duplicate_tag(chat_minute, message):
             ret = False
 
@@ -687,15 +691,21 @@ class ChatTagHandler(MessageHandler):
             Returns True if message should be persisted, returns False otherwise.
         """
         ret = False
-        tag_id = message.tagDeleteMessage.tagId
-        if tag_id in self.all_tags:
-            tag_data = self.all_tags[tag_id]
-            tag_model = tag_data.get_model()
-            # if tagID has an associated model, then we tried to persist the message
-            if tag_model is not None:
-                # Ensure that the model hasn't already been marked for delete
-                if not tag_model.deleted:
-                    ret = True
+
+        # If there is no active ChatMinute then reject this message
+        chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
+        if chat_minute is not None:
+            tag_id = message.tagDeleteMessage.tagId
+            if tag_id in self.all_tags:
+                tag_data = self.all_tags[tag_id]
+                tag_model = tag_data.get_model()
+                # if tagID has an associated model, then we tried to persist the message.
+                # 'Tried to persist the msg' means that the model was created but
+                # this class is not responsible for actually adding the model to the db.
+                if tag_model is not None:
+                    # Ensure that the model hasn't already been marked for delete
+                    if not tag_model.deleted:
+                        ret = True
 
         return ret
 
