@@ -36,7 +36,8 @@ class MessageHandler(object):
             message: Deserialized Thrift Message
 
         Returns:
-            List of models created.
+            List of (boolean, model) tuples where the boolean indicates if
+            the model should be added (True) or deleted (False) from the db.
             None if creation failed.
             Creation can fail if the input chat message fails to pass biz rules filter.
         """
@@ -50,7 +51,8 @@ class MessageHandler(object):
             message: Deserialized Thrift Message
 
         Returns:
-            List of models updated.
+            List of (boolean, model) tuples where the boolean indicates if
+            the model should be added (True) or deleted (False) from the db.
             None if update(s) failed.
             Updates can fail if the input chat message fails to pass biz rules filter.
         """
@@ -64,7 +66,8 @@ class MessageHandler(object):
             message: Deserialized Thrift Message
 
         Returns:
-            List of models deleted.
+            List of (boolean, model) tuples where the boolean indicates if
+            the model should be added (True) or deleted (False) from the db.
             None if deletion(s) failed.
             Deletions can fail if the input chat message fails to pass biz rules filter.
         """
@@ -308,23 +311,30 @@ class ChatMinuteHandler(object):
         # Create models from message
         if self._is_valid_create_message(message):
 
-            ret = []
+            models_to_update = []
             topic_id = message.minuteCreateMessage.topicId
             start_time = tz.timestamp_to_utc(message.minuteCreateMessage.startTimestamp)
 
             # Update this topic's start time
             minute = self.topic_minute_map[topic_id]
             minute.start = start_time
-            ret.append(minute)
+            models_to_update.append(minute)
             self._set_active_minute(minute)
 
             # Update parent topic's start time
             models = self._start_parent_topic_minutes(topic_id, start_time)
-            ret.extend(models)
+            models_to_update.extend(models)
 
             # Update previous topic's end-times
             models = self._end_previous_topic_minutes(topic_id, start_time)
-            ret.extend(models)
+            models_to_update.extend(models)
+
+            # Return model according to ChatMessage interface
+            if len(models_to_update) > 0:
+                ret = []
+                add_model = True
+                for model in models_to_update:
+                    ret.append((add_model, model))
 
         return ret
 
@@ -352,14 +362,14 @@ class ChatMinuteHandler(object):
 
         if self._is_valid_update_message(message):
 
-            ret = []
+            models_to_update = []
             topic_id = message.minuteUpdateMessage.topicId
             end_time = tz.timestamp_to_utc(message.minuteUpdateMessage.endTimestamp)
 
             # Update this final leaf's end time
             minute = self.topic_minute_map[topic_id]
             minute.end = end_time
-            ret.append(minute)
+            models_to_update.append(minute)
 
             # Update parent's end times
             # Expecting at least the root topic to be updated here
@@ -367,7 +377,16 @@ class ChatMinuteHandler(object):
             for topic in parent_topics_to_end:
                 minute = self.topic_minute_map[topic.id]
                 minute.end = end_time
-                ret.append(minute)
+                models_to_update.append(minute)
+
+            # Return model according to ChatMessage interface
+            print 'update minute msg is updating %d messages' % len(models_to_update)
+            if len(models_to_update) > 0:
+                ret = []
+                add_model = True
+                for model in models_to_update:
+                    print 'closing minute with topicID=%s' % model.topic_id
+                    ret.append((add_model, model))
 
         return ret
 
@@ -409,7 +428,9 @@ class ChatMinuteHandler(object):
         # Topic ID must be present in the topic collection
         topic = self.topics_collection.as_dict().get(topic_id)
         if topic is not None:
+            # Only update chat minutes when on leaf topics
             if self.topics_collection.is_leaf_topic(topic):
+                # Only listening for the last chat minute msg in the chat
                 if self.topics_collection.get_next_topic(topic) is None:
                     ret = True
 
@@ -507,6 +528,10 @@ class ChatMarkerHandler(object):
         # Store message and its data for easy reference
         marker_data = MessageData(message.markerCreateMessage.markerId, message, ret)
         self.all_markers[marker_data.id] = marker_data
+
+        # Comply with MessageHandler interface
+        if ret is not None:
+            ret = [(True, ret)]
 
         return ret
 
@@ -610,8 +635,9 @@ class ChatTagHandler(MessageHandler):
         tag_data = MessageData(message.tagCreateMessage.tagId, message, ret)
         self.all_tags[tag_data.id] = tag_data
 
-        if ret is not None:
-            ret = [ret]   # Place model in list to comply with MessageHandler interface
+        # Return model according to ChatMessage interface
+        add_model = True
+        ret = [(add_model, ret)]
 
         return ret
 
@@ -637,7 +663,7 @@ class ChatTagHandler(MessageHandler):
         if self._is_valid_delete_tag_message(message):
             tag_data = self.all_tags[tag_id]
             tag_model = tag_data.get_model()
-            tag_model.deleted = True
+            #tag_model.deleted = True
             ret = tag_model
             self._update_unique_tags(
                 self.chat_message_handler.chat_minute_handler.get_active_minute(),
@@ -650,10 +676,15 @@ class ChatTagHandler(MessageHandler):
             # Overwrite the model data associated
             # with the tag create message
             # to reflect its new deleted state.
-            tag_data = self.all_tags[tag_id]
-            tag_data.set_model(ret)
-            self.all_tags[tag_id] = tag_data
-            ret = [ret]  # Place model in list to comply with MessageHandler interface
+
+            # TODO mark tag as deleted?
+            #tag_data = self.all_tags[tag_id]
+            #tag_data.set_model(ret)
+            #self.all_tags[tag_id] = tag_data
+
+            # Return model according to ChatMessage interface
+            add_model = False
+            ret = [(add_model, ret)]
 
         return ret
 
@@ -684,6 +715,8 @@ class ChatTagHandler(MessageHandler):
         if self._is_duplicate_tag(chat_minute, message):
             ret = False
 
+        if not ret:
+            print 'invalid create message...'
         return ret
 
     def _is_valid_delete_tag_message(self, message):
@@ -706,7 +739,8 @@ class ChatTagHandler(MessageHandler):
                     # Ensure that the model hasn't already been marked for delete
                     if not tag_model.deleted:
                         ret = True
-
+        if not ret:
+            print 'invalid delete message...'
         return ret
 
 

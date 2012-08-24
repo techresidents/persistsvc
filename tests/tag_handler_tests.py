@@ -36,7 +36,7 @@ class ChatTagHandlerTest(IntegrationTestCase):
         topic_data = TopicTestDataSets()
         test_topic_datasets = topic_data.get_list()
         cls.topic_collection = test_topic_datasets[0].topic_collection
-        cls.chat_session_id = 70707 # Random ID
+        cls.chat_session_id = 27 # Random ID
         cls.db_session = cls.service.handler.get_database_session()
 
         # Deserialized Chat Messages from real Chat
@@ -85,305 +85,338 @@ class ChatTagHandlerTest(IntegrationTestCase):
     def tearDownClass(cls):
         IntegrationTestCase.tearDownClass()
 
-
-    def test_chatMessageHandler(self):
-
-        # Create ChatTagHandler
-        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
-
-        # Specify the tags expected to be persisted
-        persisted_tag_messages = [self.m7, self.m10]
-        expected_tag_models = []
-        for message in persisted_tag_messages:
-            expected_tag = ChatTag(
-                user_id=message.header.userId,
-                chat_minute=self.chat_minute, #placeholder chat minute
-                tag_id=message.tagCreateMessage.tagReferenceId,
-                name=message.tagCreateMessage.name,
-                deleted=False)
-            expected_tag_models.append(expected_tag)
-
-        # Process messages
-        tag_models = []
-        for deserialized_msg in self.chat1:
-            models = message_handler.process(deserialized_msg)
-            if models is not None:
-                for model in models:
-                    if isinstance(model, ChatTag):
-                        if not model.deleted:
-                            tag_models.append(model)
-                        else:
-                            tag_models.remove(model)
-
-        # Compare output to expected values
-        for (counter, actual_tag) in enumerate(tag_models):
-            # counter values start at 0
-            fail_msg = 'Failed with loop counter=%d' % counter
-            self.assertEqual(expected_tag_models[counter].user_id, actual_tag.user_id, fail_msg)
-            #self.assertEqual(expected_tag_models[counter].chat_minute, actual_tag.chat_minute, fail_msg)
-            self.assertEqual(expected_tag_models[counter].tag_id, actual_tag.tag_id, fail_msg)
-            self.assertEqual(expected_tag_models[counter].name, actual_tag.name, fail_msg)
-            self.assertEqual(expected_tag_models[counter].deleted, actual_tag.deleted, fail_msg)
-
-    def test_createModels_singleTag(self):
-
-        # Create ChatTagHandler
-        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
-        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
-        tag_handler = message_handler.chat_tag_handler
-
-        # Expected ChatTag
-        message = self.m7
-        expected_tag = ChatTag(
-            user_id=message.header.userId,
-            chat_minute=self.chat_minute,
-            tag_id=message.tagCreateMessage.tagReferenceId,
-            name=message.tagCreateMessage.name,
-            deleted=False)
-
-        # Create the real ChatTag
-        created_tags = tag_handler.create_models(message)
-        self.assertEqual(1, len(created_tags))
-        actual_tag = created_tags[0]
-
-        # Compare output to expected values
-        #self.assertEqual(expected_tag, actual_tag) # TODO why fails?
-        self.assertEqual(expected_tag.user_id, actual_tag.user_id)
-        self.assertEqual(expected_tag.chat_minute, actual_tag.chat_minute)
-        self.assertEqual(expected_tag.tag_id, actual_tag.tag_id)
-        self.assertEqual(expected_tag.name, actual_tag.name)
-        self.assertEqual(expected_tag.deleted, actual_tag.deleted)
-
-    def test_createModels_duplicateTags(self):
-
-        # Create ChatTagHandler
-        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
-        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
-        tag_handler = message_handler.chat_tag_handler
-
-        # Expected ChatTag
-        message = self.m7
-        expected_tag = ChatTag(
-            user_id=message.header.userId,
-            chat_minute=self.chat_minute,
-            tag_id=message.tagCreateMessage.tagReferenceId,
-            name=message.tagCreateMessage.name,
-            deleted=False)
-
-        # Create the real ChatTag
-        created_tags = tag_handler.create_models(message)
-        self.assertEqual(1, len(created_tags))
-        actual_tag = created_tags[0]
-
-        # Compare output to expected values
-        self.assertEqual(expected_tag.user_id, actual_tag.user_id)
-        self.assertEqual(expected_tag.chat_minute, actual_tag.chat_minute)
-        self.assertEqual(expected_tag.tag_id, actual_tag.tag_id)
-        self.assertEqual(expected_tag.name, actual_tag.name)
-        self.assertEqual(expected_tag.deleted, actual_tag.deleted)
-
-        # Create a duplicate ChatTag - same user, chat_minute, and tag name
-        created_tags = tag_handler.create_models(message)
-        self.assertIsNone(created_tags)
-
-    def test_createModels_sameUserSameTagNameDifferentMinute(self):
-
-        # Create ChatTagHandler
-        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
-        tag_handler = message_handler.chat_tag_handler
-
-        # Expected ChatTag
-        message = self.m10
-        expected_tag1 = ChatTag(
-            user_id=message.header.userId,
-            chat_minute=self.chat_minute,
-            tag_id=message.tagCreateMessage.tagReferenceId,
-            name=message.tagCreateMessage.name,
-            deleted=False)
-
-        # Create the real ChatTag
-        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
-        created_tags1 = tag_handler.create_models(message)
-        self.assertEqual(1, len(created_tags1))
-        actual_tag1 = created_tags1[0]
-
-        # Compare output to expected values
-        self.assertEqual(expected_tag1.user_id, actual_tag1.user_id)
-        self.assertEqual(expected_tag1.chat_minute, actual_tag1.chat_minute)
-        self.assertEqual(expected_tag1.tag_id, actual_tag1.tag_id)
-        self.assertEqual(expected_tag1.name, actual_tag1.name)
-        self.assertEqual(expected_tag1.deleted, actual_tag1.deleted)
-
-        # Expected ChatTag
-        message = self.m11
-        expected_tag2 = ChatTag(
-            user_id=message.header.userId,
-            chat_minute=self.dummy_chat_minute,  #Different ChatMinute than 1st Tag
-            tag_id=message.tagCreateMessage.tagReferenceId,
-            name=message.tagCreateMessage.name,
-            deleted=False)
-
-        # Create the real ChatTag
-        message_handler.chat_minute_handler._set_active_minute(self.dummy_chat_minute)
-        created_tags2 = tag_handler.create_models(message)
-        self.assertEqual(1, len(created_tags2))
-        actual_tag2 = created_tags2[0]
-
-        # Compare output to expected values
-        self.assertEqual(expected_tag2.user_id, actual_tag2.user_id)
-        self.assertEqual(expected_tag2.chat_minute, actual_tag2.chat_minute)
-        self.assertEqual(expected_tag2.tag_id, actual_tag2.tag_id)
-        self.assertEqual(expected_tag2.name, actual_tag2.name)
-        self.assertEqual(expected_tag2.deleted, actual_tag2.deleted)
-
-    def test_createModels_sameUserDifferentTagNameSameMinute(self):
-
-        # Create ChatTagHandler
-        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
-        tag_handler = message_handler.chat_tag_handler
-
-        # Expected ChatTag
-        message = self.m7
-        expected_tag1 = ChatTag(
-            user_id=message.header.userId,
-            chat_minute=self.chat_minute,
-            tag_id=message.tagCreateMessage.tagReferenceId,
-            name=message.tagCreateMessage.name,
-            deleted=False)
-
-        # Create the real ChatTag
-        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
-        created_tags1 = tag_handler.create_models(message)
-        self.assertEqual(1, len(created_tags1))
-        actual_tag1 = created_tags1[0]
-
-        # Compare output to expected values
-        self.assertEqual(expected_tag1.user_id, actual_tag1.user_id)
-        self.assertEqual(expected_tag1.chat_minute, actual_tag1.chat_minute)
-        self.assertEqual(expected_tag1.tag_id, actual_tag1.tag_id)
-        self.assertEqual(expected_tag1.name, actual_tag1.name)
-        self.assertEqual(expected_tag1.deleted, actual_tag1.deleted)
-
-        # Expected ChatTag
-        message = self.m8
-        expected_tag2 = ChatTag(
-            user_id=message.header.userId,
-            chat_minute=self.chat_minute,
-            tag_id=message.tagCreateMessage.tagReferenceId,
-            name=message.tagCreateMessage.name,
-            deleted=False)
-
-        # Create the real ChatTag
-        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
-        created_tags2 = tag_handler.create_models(message)
-        self.assertEqual(1, len(created_tags2))
-        actual_tag2 = created_tags2[0]
-
-        # Compare output to expected values
-        self.assertEqual(expected_tag2.user_id, actual_tag2.user_id)
-        self.assertEqual(expected_tag2.chat_minute, actual_tag2.chat_minute)
-        self.assertEqual(expected_tag2.tag_id, actual_tag2.tag_id)
-        self.assertEqual(expected_tag2.name, actual_tag2.name)
-        self.assertEqual(expected_tag2.deleted, actual_tag2.deleted)
-
-    def test_createModels_differentUserSameTagNameSameMinute(self):
-
-        # Create ChatTagHandler
-        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
-        tag_handler = message_handler.chat_tag_handler
-
-        # Expected ChatTag
-        message = self.m7
-        expected_tag1 = ChatTag(
-            user_id=message.header.userId,
-            chat_minute=self.chat_minute,
-            tag_id=message.tagCreateMessage.tagReferenceId,
-            name=message.tagCreateMessage.name,
-            deleted=False)
-
-        # Create the real ChatTag
-        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
-        created_tags1 = tag_handler.create_models(message)
-        self.assertEqual(1, len(created_tags1))
-        actual_tag1 = created_tags1[0]
-
-        # Compare output to expected values
-        self.assertEqual(expected_tag1.user_id, actual_tag1.user_id)
-        self.assertEqual(expected_tag1.chat_minute, actual_tag1.chat_minute)
-        self.assertEqual(expected_tag1.tag_id, actual_tag1.tag_id)
-        self.assertEqual(expected_tag1.name, actual_tag1.name)
-        self.assertEqual(expected_tag1.deleted, actual_tag1.deleted)
-
-        # Expected ChatTag
-        # Copy m7, change tagId, userId
-        message = Message(tagCreateMessage=TagCreateMessage(tagId='4141decbb6f44471939149d6bc801777', name='Tag', tagReferenceId=None, minuteId='6350813013bd4472b9ef5366fca0b434'), minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='1_MX4xNTg4OTk5MX4xMjcuMC4wLjF-V2VkIEF1ZyAyMiAwNjo1ODoyNSBQRFQgMjAxMn4wLjg5Mjc3OTJ-', timestamp=1345643936.348819, route=MessageRoute(type=1, recipients=[]), userId=14, type=100, id='7f577979990945efa0b41ab887155a1d'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
-        expected_tag2 = ChatTag(
-            user_id=message.header.userId,
-            chat_minute=self.chat_minute,
-            tag_id=message.tagCreateMessage.tagReferenceId,
-            name=message.tagCreateMessage.name,
-            deleted=False)
-
-        # Create the real ChatTag
-        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
-        created_tags2 = tag_handler.create_models(message)
-        self.assertEqual(1, len(created_tags2))
-        actual_tag2 = created_tags2[0]
-
-        # Compare output to expected values
-        self.assertEqual(expected_tag2.user_id, actual_tag2.user_id)
-        self.assertEqual(expected_tag2.chat_minute, actual_tag2.chat_minute)
-        self.assertEqual(expected_tag2.tag_id, actual_tag2.tag_id)
-        self.assertEqual(expected_tag2.name, actual_tag2.name)
-        self.assertEqual(expected_tag2.deleted, actual_tag2.deleted)
-
-    def test_updateModels(self):
-
-        # Create ChatTagHandler
-        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
-        tag_handler = message_handler.chat_tag_handler
-
-        message = self.m7
-        with self.assertRaises(NotImplementedError):
-            tag_handler.update_models(message)
-
-    def test_deleteModels(self):
-
-        # Create ChatTagHandler
-        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
-        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
-        tag_handler = message_handler.chat_tag_handler
-
-        # Create the real ChatTag
-        tag_create_message = self.m8
-        created_tags = tag_handler.create_models(tag_create_message)
-        self.assertEqual(1, len(created_tags))
-        created_tag = created_tags[0]
-
-        # Expected ChatTag
-        expected_tag = ChatTag(
-            user_id=created_tag.user_id,
-            chat_minute=created_tag.chat_minute,
-            tag_id=created_tag.tag_id,
-            name=created_tag.name,
-            deleted=True)
-
-        # Delete the ChatTag
-        tag_delete_message = self.m9
-        deleted_tags = tag_handler.delete_models(tag_delete_message)
-        self.assertEqual(1, len(deleted_tags))
-        actual_tag = deleted_tags[0]
-
-        # Compare output to expected values
-        self.assertEqual(expected_tag.user_id, actual_tag.user_id)
-        self.assertEqual(expected_tag.chat_minute, actual_tag.chat_minute)
-        self.assertEqual(expected_tag.tag_id, actual_tag.tag_id)
-        self.assertEqual(expected_tag.name, actual_tag.name)
-        self.assertEqual(expected_tag.deleted, actual_tag.deleted)
+#
+#    def test_chatMessageHandler(self):
+#
+#        # Create ChatTagHandler
+#        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
+#
+#        # Specify the tags expected to be persisted
+#        persisted_tag_messages = [self.m7, self.m10]
+#        expected_tag_models = []
+#        for message in persisted_tag_messages:
+#            expected_tag = ChatTag(
+#                user_id=message.header.userId,
+#                chat_minute=self.chat_minute, #placeholder chat minute
+#                tag_id=message.tagCreateMessage.tagReferenceId,
+#                name=message.tagCreateMessage.name,
+#                deleted=False)
+#            expected_tag_models.append(expected_tag)
+#
+#        # Process messages
+#        tag_models = []
+#        for deserialized_msg in self.chat1:
+#            models = message_handler.process(deserialized_msg)
+#            if models is not None:
+#                for model in models:
+#                    if isinstance(model, ChatTag):
+#                        if not model.deleted:
+#                            tag_models.append(model)
+#                        else:
+#                            tag_models.remove(model)
+#
+#        # Compare output to expected values
+#        for (counter, actual_tag) in enumerate(tag_models):
+#            # counter values start at 0
+#            fail_msg = 'Failed with loop counter=%d' % counter
+#            self.assertEqual(expected_tag_models[counter].user_id, actual_tag.user_id, fail_msg)
+#            #self.assertEqual(expected_tag_models[counter].chat_minute, actual_tag.chat_minute, fail_msg)
+#            self.assertEqual(expected_tag_models[counter].tag_id, actual_tag.tag_id, fail_msg)
+#            self.assertEqual(expected_tag_models[counter].name, actual_tag.name, fail_msg)
+#            self.assertEqual(expected_tag_models[counter].deleted, actual_tag.deleted, fail_msg)
+#
+#    def test_createModels_singleTag(self):
+#
+#        # Create ChatTagHandler
+#        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
+#        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
+#        tag_handler = message_handler.chat_tag_handler
+#
+#        # Expected ChatTag
+#        message = self.m7
+#        expected_tag = ChatTag(
+#            user_id=message.header.userId,
+#            chat_minute=self.chat_minute,
+#            tag_id=message.tagCreateMessage.tagReferenceId,
+#            name=message.tagCreateMessage.name,
+#            deleted=False)
+#
+#        # Create the real ChatTag
+#        created_tags = tag_handler.create_models(message)
+#        self.assertEqual(1, len(created_tags))
+#        actual_tag = created_tags[0]
+#
+#        # Compare output to expected values
+#        #self.assertEqual(expected_tag, actual_tag) # TODO why fails?
+#        self.assertEqual(expected_tag.user_id, actual_tag.user_id)
+#        self.assertEqual(expected_tag.chat_minute, actual_tag.chat_minute)
+#        self.assertEqual(expected_tag.tag_id, actual_tag.tag_id)
+#        self.assertEqual(expected_tag.name, actual_tag.name)
+#        self.assertEqual(expected_tag.deleted, actual_tag.deleted)
+#
+#    def test_createModels_duplicateTags(self):
+#
+#        # Create ChatTagHandler
+#        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
+#        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
+#        tag_handler = message_handler.chat_tag_handler
+#
+#        # Expected ChatTag
+#        message = self.m7
+#        expected_tag = ChatTag(
+#            user_id=message.header.userId,
+#            chat_minute=self.chat_minute,
+#            tag_id=message.tagCreateMessage.tagReferenceId,
+#            name=message.tagCreateMessage.name,
+#            deleted=False)
+#
+#        # Create the real ChatTag
+#        created_tags = tag_handler.create_models(message)
+#        self.assertEqual(1, len(created_tags))
+#        actual_tag = created_tags[0]
+#
+#        # Compare output to expected values
+#        self.assertEqual(expected_tag.user_id, actual_tag.user_id)
+#        self.assertEqual(expected_tag.chat_minute, actual_tag.chat_minute)
+#        self.assertEqual(expected_tag.tag_id, actual_tag.tag_id)
+#        self.assertEqual(expected_tag.name, actual_tag.name)
+#        self.assertEqual(expected_tag.deleted, actual_tag.deleted)
+#
+#        # Create a duplicate ChatTag - same user, chat_minute, and tag name
+#        created_tags = tag_handler.create_models(message)
+#        self.assertIsNone(created_tags)
+#
+#    def test_createModels_sameUserSameTagNameDifferentMinute(self):
+#
+#        # Create ChatTagHandler
+#        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
+#        tag_handler = message_handler.chat_tag_handler
+#
+#        # Expected ChatTag
+#        message = self.m10
+#        expected_tag1 = ChatTag(
+#            user_id=message.header.userId,
+#            chat_minute=self.chat_minute,
+#            tag_id=message.tagCreateMessage.tagReferenceId,
+#            name=message.tagCreateMessage.name,
+#            deleted=False)
+#
+#        # Create the real ChatTag
+#        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
+#        created_tags1 = tag_handler.create_models(message)
+#        self.assertEqual(1, len(created_tags1))
+#        actual_tag1 = created_tags1[0]
+#
+#        # Compare output to expected values
+#        self.assertEqual(expected_tag1.user_id, actual_tag1.user_id)
+#        self.assertEqual(expected_tag1.chat_minute, actual_tag1.chat_minute)
+#        self.assertEqual(expected_tag1.tag_id, actual_tag1.tag_id)
+#        self.assertEqual(expected_tag1.name, actual_tag1.name)
+#        self.assertEqual(expected_tag1.deleted, actual_tag1.deleted)
+#
+#        # Expected ChatTag
+#        message = self.m11
+#        expected_tag2 = ChatTag(
+#            user_id=message.header.userId,
+#            chat_minute=self.dummy_chat_minute,  #Different ChatMinute than 1st Tag
+#            tag_id=message.tagCreateMessage.tagReferenceId,
+#            name=message.tagCreateMessage.name,
+#            deleted=False)
+#
+#        # Create the real ChatTag
+#        message_handler.chat_minute_handler._set_active_minute(self.dummy_chat_minute)
+#        created_tags2 = tag_handler.create_models(message)
+#        self.assertEqual(1, len(created_tags2))
+#        actual_tag2 = created_tags2[0]
+#
+#        # Compare output to expected values
+#        self.assertEqual(expected_tag2.user_id, actual_tag2.user_id)
+#        self.assertEqual(expected_tag2.chat_minute, actual_tag2.chat_minute)
+#        self.assertEqual(expected_tag2.tag_id, actual_tag2.tag_id)
+#        self.assertEqual(expected_tag2.name, actual_tag2.name)
+#        self.assertEqual(expected_tag2.deleted, actual_tag2.deleted)
+#
+#    def test_createModels_sameUserDifferentTagNameSameMinute(self):
+#
+#        # Create ChatTagHandler
+#        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
+#        tag_handler = message_handler.chat_tag_handler
+#
+#        # Expected ChatTag
+#        message = self.m7
+#        expected_tag1 = ChatTag(
+#            user_id=message.header.userId,
+#            chat_minute=self.chat_minute,
+#            tag_id=message.tagCreateMessage.tagReferenceId,
+#            name=message.tagCreateMessage.name,
+#            deleted=False)
+#
+#        # Create the real ChatTag
+#        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
+#        created_tags1 = tag_handler.create_models(message)
+#        self.assertEqual(1, len(created_tags1))
+#        actual_tag1 = created_tags1[0]
+#
+#        # Compare output to expected values
+#        self.assertEqual(expected_tag1.user_id, actual_tag1.user_id)
+#        self.assertEqual(expected_tag1.chat_minute, actual_tag1.chat_minute)
+#        self.assertEqual(expected_tag1.tag_id, actual_tag1.tag_id)
+#        self.assertEqual(expected_tag1.name, actual_tag1.name)
+#        self.assertEqual(expected_tag1.deleted, actual_tag1.deleted)
+#
+#        # Expected ChatTag
+#        message = self.m8
+#        expected_tag2 = ChatTag(
+#            user_id=message.header.userId,
+#            chat_minute=self.chat_minute,
+#            tag_id=message.tagCreateMessage.tagReferenceId,
+#            name=message.tagCreateMessage.name,
+#            deleted=False)
+#
+#        # Create the real ChatTag
+#        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
+#        created_tags2 = tag_handler.create_models(message)
+#        self.assertEqual(1, len(created_tags2))
+#        actual_tag2 = created_tags2[0]
+#
+#        # Compare output to expected values
+#        self.assertEqual(expected_tag2.user_id, actual_tag2.user_id)
+#        self.assertEqual(expected_tag2.chat_minute, actual_tag2.chat_minute)
+#        self.assertEqual(expected_tag2.tag_id, actual_tag2.tag_id)
+#        self.assertEqual(expected_tag2.name, actual_tag2.name)
+#        self.assertEqual(expected_tag2.deleted, actual_tag2.deleted)
+#
+#    def test_createModels_differentUserSameTagNameSameMinute(self):
+#
+#        # Create ChatTagHandler
+#        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
+#        tag_handler = message_handler.chat_tag_handler
+#
+#        # Expected ChatTag
+#        message = self.m7
+#        expected_tag1 = ChatTag(
+#            user_id=message.header.userId,
+#            chat_minute=self.chat_minute,
+#            tag_id=message.tagCreateMessage.tagReferenceId,
+#            name=message.tagCreateMessage.name,
+#            deleted=False)
+#
+#        # Create the real ChatTag
+#        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
+#        created_tags1 = tag_handler.create_models(message)
+#        self.assertEqual(1, len(created_tags1))
+#        actual_tag1 = created_tags1[0]
+#
+#        # Compare output to expected values
+#        self.assertEqual(expected_tag1.user_id, actual_tag1.user_id)
+#        self.assertEqual(expected_tag1.chat_minute, actual_tag1.chat_minute)
+#        self.assertEqual(expected_tag1.tag_id, actual_tag1.tag_id)
+#        self.assertEqual(expected_tag1.name, actual_tag1.name)
+#        self.assertEqual(expected_tag1.deleted, actual_tag1.deleted)
+#
+#        # Expected ChatTag
+#        # Copy m7, change tagId, userId
+#        message = Message(tagCreateMessage=TagCreateMessage(tagId='4141decbb6f44471939149d6bc801777', name='Tag', tagReferenceId=None, minuteId='6350813013bd4472b9ef5366fca0b434'), minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='1_MX4xNTg4OTk5MX4xMjcuMC4wLjF-V2VkIEF1ZyAyMiAwNjo1ODoyNSBQRFQgMjAxMn4wLjg5Mjc3OTJ-', timestamp=1345643936.348819, route=MessageRoute(type=1, recipients=[]), userId=14, type=100, id='7f577979990945efa0b41ab887155a1d'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
+#        expected_tag2 = ChatTag(
+#            user_id=message.header.userId,
+#            chat_minute=self.chat_minute,
+#            tag_id=message.tagCreateMessage.tagReferenceId,
+#            name=message.tagCreateMessage.name,
+#            deleted=False)
+#
+#        # Create the real ChatTag
+#        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
+#        created_tags2 = tag_handler.create_models(message)
+#        self.assertEqual(1, len(created_tags2))
+#        actual_tag2 = created_tags2[0]
+#
+#        # Compare output to expected values
+#        self.assertEqual(expected_tag2.user_id, actual_tag2.user_id)
+#        self.assertEqual(expected_tag2.chat_minute, actual_tag2.chat_minute)
+#        self.assertEqual(expected_tag2.tag_id, actual_tag2.tag_id)
+#        self.assertEqual(expected_tag2.name, actual_tag2.name)
+#        self.assertEqual(expected_tag2.deleted, actual_tag2.deleted)
+#
+#    def test_updateModels(self):
+#
+#        # Create ChatTagHandler
+#        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
+#        tag_handler = message_handler.chat_tag_handler
+#
+#        message = self.m7
+#        with self.assertRaises(NotImplementedError):
+#            tag_handler.update_models(message)
+#
+#    def test_deleteModels(self):
+#
+#        # Create ChatTagHandler
+#        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
+#        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
+#        tag_handler = message_handler.chat_tag_handler
+#
+#        # Create the real ChatTag
+#        tag_create_message = self.m8
+#        created_tags = tag_handler.create_models(tag_create_message)
+#        self.assertEqual(1, len(created_tags))
+#        created_tag = created_tags[0]
+#
+#        # Expected ChatTag
+#        expected_tag = ChatTag(
+#            user_id=created_tag.user_id,
+#            chat_minute=created_tag.chat_minute,
+#            tag_id=created_tag.tag_id,
+#            name=created_tag.name,
+#            deleted=True)
+#
+#        # Delete the ChatTag
+#        tag_delete_message = self.m9
+#        deleted_tags = tag_handler.delete_models(tag_delete_message)
+#        self.assertEqual(1, len(deleted_tags))
+#        actual_tag = deleted_tags[0]
+#
+#        # Compare output to expected values
+#        self.assertEqual(expected_tag.user_id, actual_tag.user_id)
+#        self.assertEqual(expected_tag.chat_minute, actual_tag.chat_minute)
+#        self.assertEqual(expected_tag.tag_id, actual_tag.tag_id)
+#        self.assertEqual(expected_tag.name, actual_tag.name)
+#        self.assertEqual(expected_tag.deleted, actual_tag.deleted)
 
     def test_isDuplicateTag(self):
-        # TODO
-        pass
+        # Expected ChatTag
+#        message = self.m7
+#        expected_tag = ChatTag(
+#            user_id=message.header.userId,
+#            chat_minute=self.chat_minute,
+#            tag_id=message.tagCreateMessage.tagReferenceId,
+#            name=message.tagCreateMessage.name,
+#            deleted=False)
+#        self.db_session.add(expected_tag)
+#        self.db_session.expunge(expected_tag)
+#        self.db_session.add(expected_tag)
+#        self.db_session.commit()
+
+        msg1 = Message(tagCreateMessage=TagCreateMessage(tagId='09f5de15d1ee4157948b3d1dc9d3ac54', name='deleted tag', tagReferenceId=None, minuteId='0e66639b154b4f778d77ae0ee600c174'), minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='2_MX4xNTg4OTk5MX4xMjcuMC4wLjF-VGh1IEF1ZyAyMyAwNzo0ODoyNiBQRFQgMjAxMn4wLjcwMjU0NDh-', timestamp=1345733547.277779, route=MessageRoute(type=1, recipients=[]), userId=13, type=100, id='d5ef94840d464f82bea030ff29725e62'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
+        msg2 = Message(tagCreateMessage=None, minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='2_MX4xNTg4OTk5MX4xMjcuMC4wLjF-VGh1IEF1ZyAyMyAwNzo0ODoyNiBQRFQgMjAxMn4wLjcwMjU0NDh-', timestamp=1345733549.768159, route=MessageRoute(type=1, recipients=[]), userId=13, type=101, id='4e9eddf29f2a477592744553dcff79de'), tagDeleteMessage=TagDeleteMessage(tagId='09f5de15d1ee4157948b3d1dc9d3ac54'), whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
+        msg3 = Message(tagCreateMessage=TagCreateMessage(tagId='4fedd81a80c746039df49e71c7c4dae6', name='deleted tag', tagReferenceId=None, minuteId='0e66639b154b4f778d77ae0ee600c174'), minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='2_MX4xNTg4OTk5MX4xMjcuMC4wLjF-VGh1IEF1ZyAyMyAwNzo0ODoyNiBQRFQgMjAxMn4wLjcwMjU0NDh-', timestamp=1345733555.696387, route=MessageRoute(type=1, recipients=[]), userId=13, type=100, id='a381f46f59594d899f4f59e95c2db88b'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
+        msgs = [msg1, msg2, msg3]
+        # Create ChatTagHandler
+        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
+        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
+        tag_handler = message_handler.chat_tag_handler
+
+        for msg in msgs:
+            ret = message_handler.process(msg)
+            if ret is not None:
+                for addModel, model in ret:
+                    if addModel:
+                        self.db_session.add(model)
+                    else:
+                        self.db_session.expunge(model)
+
+        self.chat_minute.end = tz.timestamp_to_utc(0)
+
+        self.db_session.commit()
+
 
 
 if __name__ == '__main__':
