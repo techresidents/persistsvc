@@ -180,14 +180,12 @@ class ChatPersister(object):
             # Process the deserialized chat messages
             handler = ChatMessageHandler(self.chat_session_id, topics_collection)
             for message in deserialized_chat_msgs:
-                if message.minuteCreateMessage is not None or message.minuteUpdateMessage is not None or message.tagCreateMessage is not None or message.tagDeleteMessage is not None:
-                    ret = handler.process(message)
-                    if ret is not None:
-                        for addModel, model in ret:
-                            if addModel:
-                                db_session.add(model)
-                            else:
-                                db_session.expunge(model)
+                handler.process(message)
+
+            # Persist the generated models
+            models_to_persist = handler.finalize()
+            for model in models_to_persist:
+                db_session.add(model)
 
             # commit all db changes
             db_session.commit()
