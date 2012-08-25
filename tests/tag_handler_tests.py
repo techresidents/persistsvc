@@ -187,12 +187,6 @@ class ChatTagHandlerTest(IntegrationTestCase):
 
     def test_createModels_sameUserSameTagNameDifferentMinute(self):
 
-        print '************************'
-        print 'ChatMinuteOrder:'
-        print self.chat_minute
-        print self.dummy_chat_minute
-        print '************************'
-
         # Create ChatTagHandler
         message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
         tag_handler = message_handler.chat_tag_handler

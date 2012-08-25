@@ -1,6 +1,8 @@
 import abc
 import logging
 
+from persistsvc_exceptions import NoActiveChatMinuteException, \
+    DuplicateTagIdException, TagIdDoesNotExistException
 from trchatsvc.gen.ttypes import Message, MessageType, MarkerType
 from trsvcscore.db.models import ChatMinute, ChatSpeakingMarker,\
     ChatTag
@@ -19,6 +21,7 @@ from trpycore.timezone import tz
 #   8) Minute Create
 #   9) Topic ID not present in list of topics for this chat
 #   10)
+
 
 
 class MessageHandler(object):
@@ -157,25 +160,30 @@ class ChatMessageHandler(object):
             that need to be stored.  Some handlers input one message and
             return multiple models to be persisted.
         """
+        try:
+            if message.header.type == MessageType.MINUTE_CREATE:
+                self.log.debug('handling minute create message id=%s' % message.minuteCreateMessage.minuteId)
+                self.chat_minute_handler.create_models(message)
 
-        if message.header.type == MessageType.MINUTE_CREATE:
-            self.log.debug('handling minute create message id=%s' % message.minuteCreateMessage.minuteId)
-            self.chat_minute_handler.create_models(message)
+            elif message.header.type == MessageType.MINUTE_UPDATE:
+                self.log.debug('handling minute update message id=%s' % message.minuteUpdateMessage.minuteId)
+                self.chat_minute_handler.update_models(message)
 
-        elif message.header.type == MessageType.MINUTE_UPDATE:
-            self.log.debug('handling minute update message id=%s' % message.minuteUpdateMessage.minuteId)
-            self.chat_minute_handler.update_models(message)
+            elif message.header.type == MessageType.MARKER_CREATE:
+                self.log.debug('handling marker create message id=%s' % message.markerCreateMessage.markerId)
 
-        elif message.header.type == MessageType.MARKER_CREATE:
-            self.log.debug('handling marker create message id=%s' % message.markerCreateMessage.markerId)
+            elif message.header.type == MessageType.TAG_CREATE:
+                self.log.debug('handling tag create message id=%s' % message.tagCreateMessage.tagId)
+                self.chat_tag_handler.create_models(message)
 
-        elif message.header.type == MessageType.TAG_CREATE:
-            self.log.debug('handling tag create message id=%s' % message.tagCreateMessage.tagId)
-            self.chat_tag_handler.create_models(message)
+            elif message.header.type == MessageType.TAG_DELETE:
+                self.log.debug('handling tag delete message id=%s' % message.tagDeleteMessage.tagId)
+                self.chat_tag_handler.delete_models(message)
 
-        elif message.header.type == MessageType.TAG_DELETE:
-            self.log.debug('handling tag delete message id=%s' % message.tagDeleteMessage.tagId)
-            self.chat_tag_handler.delete_models(message)
+        except TagIdDoesNotExistException as e:
+            self.log.warning('Attempted to access tag with tagID=%s', e.id)
+        except DuplicateTagIdException as e:
+            self.log.warning('Attempted to create tag with duplicate tagID=%s' % e.id)
 
 
 class ChatMinuteHandler(object):
@@ -705,14 +713,7 @@ class ChatTagHandler(MessageHandler):
         for message_model_data_obj in data_to_persist:
             models_to_persist.append(message_model_data_obj.get_model())
 
-        print '**************************************'
-        print 'Models to persist:'
-        for model in models_to_persist:
-            print model.chat_minute
-        print '**************************************'
-
         return models_to_persist
-
 
     def create_models(self, message):
         """
@@ -723,9 +724,9 @@ class ChatTagHandler(MessageHandler):
             Args:
                 message: Deserialized Thrift Message
 
-            Returns:
-                Empty list if message was processed.
-                None if message was discarded.
+            Throws:
+                DuplicateTagIdException
+                NoActiveChatMinuteException
         """
         created_model = None
 
@@ -741,11 +742,8 @@ class ChatTagHandler(MessageHandler):
             self._update_tags_to_persist(chat_minute, message)
 
         # Store message and its data for tagID look-ups on tag delete messages.
-        if message.tagCreateMessage.tagId not in self.all_tags:
-            # Perform this check to ensure that we don't overwrite a tag entry,
-            # e.g. if the input message was invalid with a duplicate tagId
-            tag_data = MessageModelData(message.tagCreateMessage.tagId, message, created_model)
-            self.all_tags[tag_data.id] = tag_data
+        tag_data = MessageModelData(message.tagCreateMessage.tagId, message, created_model)
+        self.all_tags[tag_data.id] = tag_data
 
         return
 
@@ -759,17 +757,15 @@ class ChatTagHandler(MessageHandler):
             Args:
                 message: Deserialized Thrift Message
 
-            Returns:
-                Returns an empty list if message was processed.
-                Returns None if message was discarded.
+            Throws:
+                NoActiveChatMinuteException
         """
         deleted_model = None
 
         # Update model
         tag_id = message.tagDeleteMessage.tagId
         if self._is_valid_delete_tag_message(message):
-            tag_data = self.all_tags[tag_id]
-            tag_model = tag_data.get_model()
+            tag_model = self.all_tags[tag_id].get_model()
             tag_model.deleted = True
             deleted_model = tag_model
             self._update_tags_to_persist(
@@ -790,7 +786,15 @@ class ChatTagHandler(MessageHandler):
 
     def _is_valid_create_tag_message(self, message):
         """
-            Returns True if message should be persisted, returns False otherwise.
+            Args:
+                message: deserialized Thrift Message
+
+            Returns:
+             True if message should be persisted, False otherwise.
+
+            Throws:
+                DuplicateTagIdException
+                NoActiveChatMinuteException
         """
         ret = True
 
@@ -800,13 +804,12 @@ class ChatTagHandler(MessageHandler):
         # Check for duplicate tagID to prevent overwriting existing tag data
         tag_id = message.tagCreateMessage.tagId
         if tag_id in self.all_tags:
-            self.log.warning('Attempted to create tag with duplicate tagID=%s' % tag_id)
-            ret = False
+            raise DuplicateTagIdException(tag_id)
 
         # If there is no active ChatMinute then reject this message
         chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
         if chat_minute is None:
-            ret = False
+            raise NoActiveChatMinuteException()
 
         # Check if tag violates the unique-together constraint (user, minute, name)
         # The db will throw an exception if a tag violates this constraint. The reason
@@ -819,24 +822,39 @@ class ChatTagHandler(MessageHandler):
 
     def _is_valid_delete_tag_message(self, message):
         """
-            Returns True if message should be persisted, returns False otherwise.
+            Args:
+                message: deserialized Thrift Message
+
+            Returns:
+             True if message should be persisted, False otherwise.
+
+            Throws:
+                NoActiveChatMinuteException
+                TagIdDoesNotExistException
         """
         ret = False
 
         # If there is no active ChatMinute then reject this message
         chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
-        if chat_minute is not None:
-            tag_id = message.tagDeleteMessage.tagId
-            if tag_id in self.all_tags:
-                tag_data = self.all_tags[tag_id]
-                tag_model = tag_data.get_model()
-                # if tagID has an associated model, then we tried to persist the message.
-                # 'Tried to persist the msg' means that the model was created but
-                # this class is not responsible for actually adding the model to the db.
-                if tag_model is not None:
-                    # Ensure that the model hasn't already been marked for delete
-                    if not tag_model.deleted:
-                        ret = True
+        if chat_minute is None:
+            raise NoActiveChatMinuteException()
+
+        tag_id = message.tagDeleteMessage.tagId
+        if tag_id not in self.all_tags:
+            raise TagIdDoesNotExistException(tag_id)
+
+        # Check that this tag was marked to be persisted
+        is_tag_persisted = False
+        for minute, tags in self.tags_to_persist.iteritems():
+            if tag_id in tags.keys():
+                is_tag_persisted = True
+                break
+        if is_tag_persisted:
+            tag_model = self.all_tags[tag_id].get_model()
+            # Ensure that the model hasn't already been marked for delete
+            if not tag_model.deleted:
+                ret = True
+
         return ret
 
 

@@ -17,16 +17,8 @@ from trsvcscore.db.models import ChatPersistJob, ChatMessage, ChatMessageFormatT
 from cache import ChatMessageCache
 from mapper import ChatMessageMapper
 from message_handler import ChatMessageHandler
+from persistsvc_exceptions import DuplicatePersistJobException
 from topic_data_manager import TopicDataManager
-
-import settings
-
-class DuplicatePersistJobException(Exception):
-    def __init__(self, message):
-        self.message = message
-
-    def __str__(self):
-        return self.__class__.__name__ + ": " + self.message
 
 
 class ChatPersister(object):
@@ -68,7 +60,7 @@ class ChatPersister(object):
 
             self._end_chat_persist_job()
         except DuplicatePersistJobException as warning:
-            self.log.warning(warning)
+            self.log.warning("Chat persist job with job_id=%d already claimed. Stopping processing." % self.job_id)
             # This means that the PersistJob was claimed just before
             # this thread claimed it. Stop processing the job. There's
             # no need to abort the job since no processing of the job
@@ -100,7 +92,7 @@ class ChatPersister(object):
             })
 
         if (not num_rows_updated):
-            raise DuplicatePersistJobException(message="Chat persist job with job_id=%d already claimed. Stopping processing." % self.job_id)
+            raise DuplicatePersistJobException()
 
         db_session.commit()
         # db_session.close() TODO
