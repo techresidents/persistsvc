@@ -19,6 +19,8 @@ SERVICE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../", SE
 sys.path.insert(0, SERVICE_ROOT)
 
 from message_handler import ChatMessageHandler, ChatTagHandler
+from persistsvc_exceptions import DuplicateTagIdException, NoActiveChatMinuteException, \
+    TagIdDoesNotExistException
 from testbase import IntegrationTestCase
 from topic_test_data import TopicTestDataSets
 
@@ -170,7 +172,8 @@ class ChatTagHandlerTest(IntegrationTestCase):
         tag_handler.create_models(message)
 
         # Create a duplicate ChatTag - same user, chat_minute, and tag name
-        tag_handler.create_models(message)
+        with self.assertRaises(DuplicateTagIdException):
+            tag_handler.create_models(message)
 
         # Get created tags
         created_tags = tag_handler.finalize()
@@ -184,6 +187,23 @@ class ChatTagHandlerTest(IntegrationTestCase):
         self.assertEqual(expected_tag.tag_id, actual_tag.tag_id)
         self.assertEqual(expected_tag.name, actual_tag.name)
         self.assertEqual(expected_tag.deleted, actual_tag.deleted)
+
+    def test_createModels_noActiveChatMinute(self):
+
+        # Create ChatTagHandler
+        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
+        message_handler.chat_minute_handler._set_active_minute(None)
+        tag_handler = message_handler.chat_tag_handler
+
+        # Test create_models
+        message = self.m7
+        with self.assertRaises(NoActiveChatMinuteException):
+            tag_handler.create_models(message)
+
+        # Test delete_models
+        message = self.m9
+        with self.assertRaises(NoActiveChatMinuteException):
+            tag_handler.delete_models(message)
 
     def test_createModels_sameUserSameTagNameDifferentMinute(self):
 
@@ -380,43 +400,38 @@ class ChatTagHandlerTest(IntegrationTestCase):
         created_tags = tag_handler.finalize()
         self.assertEqual(0, len(created_tags))
 
-    def test_isDuplicateTag(self):
-        pass
-        # Expected ChatTag
-#        message = self.m7
-#        expected_tag = ChatTag(
-#            user_id=message.header.userId,
-#            chat_minute=self.chat_minute,
-#            tag_id=message.tagCreateMessage.tagReferenceId,
-#            name=message.tagCreateMessage.name,
-#            deleted=False)
-#        self.db_session.add(expected_tag)
-#        self.db_session.expunge(expected_tag)
-#        self.db_session.add(expected_tag)
-#        self.db_session.commit()
+    def test_deleteModels_invalidTagID(self):
 
-#        msg1 = Message(tagCreateMessage=TagCreateMessage(tagId='09f5de15d1ee4157948b3d1dc9d3ac54', name='deleted tag', tagReferenceId=None, minuteId='0e66639b154b4f778d77ae0ee600c174'), minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='2_MX4xNTg4OTk5MX4xMjcuMC4wLjF-VGh1IEF1ZyAyMyAwNzo0ODoyNiBQRFQgMjAxMn4wLjcwMjU0NDh-', timestamp=1345733547.277779, route=MessageRoute(type=1, recipients=[]), userId=13, type=100, id='d5ef94840d464f82bea030ff29725e62'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
-#        msg2 = Message(tagCreateMessage=None, minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='2_MX4xNTg4OTk5MX4xMjcuMC4wLjF-VGh1IEF1ZyAyMyAwNzo0ODoyNiBQRFQgMjAxMn4wLjcwMjU0NDh-', timestamp=1345733549.768159, route=MessageRoute(type=1, recipients=[]), userId=13, type=101, id='4e9eddf29f2a477592744553dcff79de'), tagDeleteMessage=TagDeleteMessage(tagId='09f5de15d1ee4157948b3d1dc9d3ac54'), whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
-#        msg3 = Message(tagCreateMessage=TagCreateMessage(tagId='4fedd81a80c746039df49e71c7c4dae6', name='deleted tag', tagReferenceId=None, minuteId='0e66639b154b4f778d77ae0ee600c174'), minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken='2_MX4xNTg4OTk5MX4xMjcuMC4wLjF-VGh1IEF1ZyAyMyAwNzo0ODoyNiBQRFQgMjAxMn4wLjcwMjU0NDh-', timestamp=1345733555.696387, route=MessageRoute(type=1, recipients=[]), userId=13, type=100, id='a381f46f59594d899f4f59e95c2db88b'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=None, whiteboardCreatePathMessage=None)
-#        msgs = [msg1, msg2, msg3]
-#        # Create ChatTagHandler
-#        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
-#        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
-#        tag_handler = message_handler.chat_tag_handler
-#
-#        for msg in msgs:
-#            ret = message_handler.process(msg)
-#            if ret is not None:
-#                for addModel, model in ret:
-#                    if addModel:
-#                        self.db_session.add(model)
-#                    else:
-#                        self.db_session.expunge(model)
-#
-#        self.chat_minute.end = tz.timestamp_to_utc(0)
-#
-#        self.db_session.commit()
+        # Create ChatTagHandler
+        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
+        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
+        tag_handler = message_handler.chat_tag_handler
 
+        message = self.m9
+        with self.assertRaises(TagIdDoesNotExistException):
+            tag_handler.delete_models(message)
+
+    def test_deleteModels_doubleDelete(self):
+
+        # Create ChatTagHandler
+        message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
+        message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
+        tag_handler = message_handler.chat_tag_handler
+
+        # Create the real ChatTag
+        tag_create_message = self.m8
+        tag_handler.create_models(tag_create_message)
+
+        # Delete the ChatTag
+        tag_delete_message = self.m9
+        tag_handler.delete_models(tag_delete_message)
+
+        # Delete the tag again
+        # Should silently fail
+        tag_handler.delete_models(tag_delete_message)
+
+        created_tags = tag_handler.finalize()
+        self.assertEqual(0, len(created_tags))
 
 
 if __name__ == '__main__':

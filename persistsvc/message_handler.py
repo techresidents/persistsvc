@@ -783,7 +783,6 @@ class ChatTagHandler(MessageHandler):
             tag_data.set_model(deleted_model)
             self.all_tags[tag_id] = tag_data
 
-
     def _is_valid_create_tag_message(self, message):
         """
             Args:
