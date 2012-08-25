@@ -278,12 +278,14 @@ class ChatMinuteHandler(object):
             The Chat Minute Handler class is responsible for
             setting the active minute using this method.
         """
+        print 'setActiveMinute() setting %s' % id(chat_minute)
         self.active_minute = chat_minute
 
     def get_active_minute(self):
         """
             Returns the active chat minute.
         """
+        print 'getActiveMinute() returning %s' % id(self.active_minute)
         return self.active_minute
 
     def _start_parent_topic_minutes(self, topic_id, start_time):
@@ -595,7 +597,7 @@ class ChatMarkerHandler(object):
             self.speaking_state[user_id] = user_speaking_data
 
         # Store message and its data for easy reference
-        marker_data = MessageData(message.markerCreateMessage.markerId, message, created_model)
+        marker_data = MessageModelData(message.markerCreateMessage.markerId, message, created_model)
         self.all_markers[marker_data.id] = marker_data
 
 
@@ -630,12 +632,7 @@ class ChatTagHandler(MessageHandler):
     def __init__(self, chat_message_handler):
         super(ChatTagHandler, self).__init__(chat_message_handler)
         self.log = logging.getLogger(__name__)
-
-
-
-        # TODO This will not contain all tags now since a duplicate message was overwriting the previous entry.
-        # It's really just used as a dict of tagID to tag model
-        self.all_tags = {}   # {tag_id : data}
+        self.all_tags = {}   # {tag_id : MessageData}
 
         # Create nested dict to ensure only unique tags are persisted.
         # Tags are considered unique across (user, minute, tag-name)
@@ -643,6 +640,17 @@ class ChatTagHandler(MessageHandler):
         # {chat_minute : { tagId : userID+tagName
         #                  tagId: userID+tagName}
         self.tags_to_persist = {}
+
+    def _compare_MessageModelData(self, obj1, obj2):
+        """
+            Sort data by timestamp. Objects are returned
+            in chronological order.
+        """
+        message1 = obj1.get_message()
+        timestamp1 = message1.header.timestamp
+        message2 = obj2.get_message()
+        timestamp2 = message2.header.timestamp
+        return cmp(timestamp1, timestamp2)
 
 
     def _update_tags_to_persist(self, chat_minute, message, deleted=False):
@@ -700,16 +708,20 @@ class ChatTagHandler(MessageHandler):
             Returns:
                 List of models to persist.
         """
-        tag_ids = []
+        data_to_persist = []
         for minute in self.tags_to_persist:
             for tag_id in self.tags_to_persist[minute].keys():
-                tag_ids.append(tag_id)
+                data = self.all_tags[tag_id]
+                data_to_persist.append(data)
 
+        # Sort list by timestamp and extract the models to persist
+        data_to_persist.sort(key=lambda d: d.get_message().header.timestamp)
         models_to_persist = []
-        for id in tag_ids:
-            model = self.all_tags[id].get_model()
-            models_to_persist.append(model)
+        for message_model_data_obj in data_to_persist:
+            models_to_persist.append(message_model_data_obj.get_model())
 
+        print 'Models to persist:'
+        print models_to_persist
         return models_to_persist
 
     def create_models(self, message):
@@ -736,11 +748,13 @@ class ChatTagHandler(MessageHandler):
                 tag_id=message.tagCreateMessage.tagReferenceId,
                 name=message.tagCreateMessage.name,
                 deleted=False)
-
             self._update_tags_to_persist(chat_minute, message)
 
-            # Store message and its data for tagID look-ups on tag delete messages.
-            tag_data = MessageData(message.tagCreateMessage.tagId, message, created_model)
+        # Store message and its data for tagID look-ups on tag delete messages.
+        if message.tagCreateMessage.tagId not in self.all_tags:
+            # Perform this check to ensure that we don't overwrite a tag entry,
+            # e.g. if the input message was invalid with a duplicate tagId
+            tag_data = MessageModelData(message.tagCreateMessage.tagId, message, created_model)
             self.all_tags[tag_data.id] = tag_data
 
         return
@@ -837,7 +851,7 @@ class ChatTagHandler(MessageHandler):
 
 
 
-class MessageData(object):
+class MessageModelData(object):
     """
         Data structure to maintain references to a chat message's
         associated message and model.

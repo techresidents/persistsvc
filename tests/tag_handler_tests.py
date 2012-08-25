@@ -88,6 +88,7 @@ class ChatTagHandlerTest(IntegrationTestCase):
 
     def test_chatMessageHandler(self):
 
+        print 'test1'
         # Create ChatTagHandler
         message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
 
@@ -121,7 +122,7 @@ class ChatTagHandlerTest(IntegrationTestCase):
             self.assertEqual(expected_tag_models[counter].deleted, actual_tag.deleted, fail_msg)
 
     def test_createModels_singleTag(self):
-
+        print 'test2'
         # Create ChatTagHandler
         message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
         message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
@@ -151,7 +152,7 @@ class ChatTagHandlerTest(IntegrationTestCase):
         self.assertEqual(expected_tag.deleted, actual_tag.deleted)
 
     def test_createModels_duplicateTags(self):
-
+        print 'test3'
         # Create ChatTagHandler
         message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
         message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
@@ -186,6 +187,10 @@ class ChatTagHandlerTest(IntegrationTestCase):
         self.assertEqual(expected_tag.deleted, actual_tag.deleted)
 
     def test_createModels_sameUserSameTagNameDifferentMinute(self):
+        print 'test4 - bad test'
+        print 'chat_minute1 id is %s' % id(self.chat_minute)
+        print 'dummy_minute id is %s' % id(self.dummy_chat_minute)
+
 
         # Create ChatTagHandler
         message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
@@ -241,7 +246,7 @@ class ChatTagHandlerTest(IntegrationTestCase):
         self.assertEqual(expected_tag2.deleted, actual_tag2.deleted)
 
     def test_createModels_sameUserDifferentTagNameSameMinute(self):
-
+        print 'test5'
         # Create ChatTagHandler
         message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
         tag_handler = message_handler.chat_tag_handler
@@ -296,7 +301,7 @@ class ChatTagHandlerTest(IntegrationTestCase):
         self.assertEqual(expected_tag2.deleted, actual_tag2.deleted)
 
     def test_createModels_differentUserSameTagNameSameMinute(self):
-
+        print 'test6'
         # Create ChatTagHandler
         message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
         tag_handler = message_handler.chat_tag_handler
@@ -353,7 +358,7 @@ class ChatTagHandlerTest(IntegrationTestCase):
         self.assertEqual(expected_tag2.deleted, actual_tag2.deleted)
 
     def test_updateModels(self):
-
+        print 'test7'
         # Create ChatTagHandler
         message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
         tag_handler = message_handler.chat_tag_handler
@@ -363,7 +368,7 @@ class ChatTagHandlerTest(IntegrationTestCase):
             tag_handler.update_models(message)
 
     def test_deleteModels(self):
-
+        print 'test8'
         # Create ChatTagHandler
         message_handler = ChatMessageHandler(self.chat_session_id, self.topic_collection)
         message_handler.chat_minute_handler._set_active_minute(self.chat_minute)
