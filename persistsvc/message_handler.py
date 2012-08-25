@@ -11,13 +11,6 @@ from trpycore.timezone import tz
 
 
 # Exceptional conditions
-#   1) duplicate tagID on createTagMessage
-#   2) no active chat minute : createTagMessage
-#   3) duplicate tag on (user, minute, name)
-#   4) Tag Delete
-#   5) tagID to delete not in our list of all tagIDs
-#   6) model already marked as deleted
-#   7) model of associated tagID is None
 #   8) Minute Create
 #   9) Topic ID not present in list of topics for this chat
 #   10)
@@ -628,7 +621,9 @@ class ChatTagHandler(MessageHandler):
         Handler for Chat Tag messages
 
         This class creates model instances
-        from chat minute messages.
+        from chat minute messages. Call finalize()
+        to return all created tag models after processing
+        all of a chat's messages.
 
         This class is responsible for
         defining and applying the business rules to handle

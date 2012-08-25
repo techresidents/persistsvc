@@ -117,10 +117,12 @@ class ChatTagHandlerTest(IntegrationTestCase):
             # counter values start at 0
             fail_msg = 'Failed with loop counter=%d' % counter
             self.assertEqual(expected_tag_models[counter].user_id, actual_tag.user_id, fail_msg)
-            #self.assertEqual(expected_tag_models[counter].chat_minute, actual_tag.chat_minute, fail_msg) TODO
             self.assertEqual(expected_tag_models[counter].tag_id, actual_tag.tag_id, fail_msg)
             self.assertEqual(expected_tag_models[counter].name, actual_tag.name, fail_msg)
             self.assertEqual(expected_tag_models[counter].deleted, actual_tag.deleted, fail_msg)
+            self.assertEqual(expected_tag_models[counter].chat_minute.topic_id, actual_tag.chat_minute.topic_id, fail_msg)
+            self.assertEqual(expected_tag_models[counter].chat_minute.start, actual_tag.chat_minute.start, fail_msg)
+            self.assertEqual(expected_tag_models[counter].chat_minute.end, actual_tag.chat_minute.end, fail_msg)
 
     def test_createModels_singleTag(self):
 
@@ -145,7 +147,6 @@ class ChatTagHandlerTest(IntegrationTestCase):
         actual_tag = created_tags[0]
 
         # Compare output to expected values
-        #self.assertEqual(expected_tag, actual_tag) # TODO why fails?
         self.assertEqual(expected_tag.user_id, actual_tag.user_id)
         self.assertEqual(expected_tag.chat_minute, actual_tag.chat_minute)
         self.assertEqual(expected_tag.tag_id, actual_tag.tag_id)
