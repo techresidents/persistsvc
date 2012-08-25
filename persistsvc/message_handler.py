@@ -278,14 +278,12 @@ class ChatMinuteHandler(object):
             The Chat Minute Handler class is responsible for
             setting the active minute using this method.
         """
-        print 'setActiveMinute() setting %s' % id(chat_minute)
         self.active_minute = chat_minute
 
     def get_active_minute(self):
         """
             Returns the active chat minute.
         """
-        print 'getActiveMinute() returning %s' % id(self.active_minute)
         return self.active_minute
 
     def _start_parent_topic_minutes(self, topic_id, start_time):
@@ -641,18 +639,6 @@ class ChatTagHandler(MessageHandler):
         #                  tagId: userID+tagName}
         self.tags_to_persist = {}
 
-    def _compare_MessageModelData(self, obj1, obj2):
-        """
-            Sort data by timestamp. Objects are returned
-            in chronological order.
-        """
-        message1 = obj1.get_message()
-        timestamp1 = message1.header.timestamp
-        message2 = obj2.get_message()
-        timestamp2 = message2.header.timestamp
-        return cmp(timestamp1, timestamp2)
-
-
     def _update_tags_to_persist(self, chat_minute, message, deleted=False):
         """
             Store a tag's associated user, minute, and name to ensure uniqueness.
@@ -711,18 +697,22 @@ class ChatTagHandler(MessageHandler):
         data_to_persist = []
         for minute in self.tags_to_persist:
             for tag_id in self.tags_to_persist[minute].keys():
-                data = self.all_tags[tag_id]
-                data_to_persist.append(data)
+                data_to_persist.append(self.all_tags[tag_id])
 
         # Sort list by timestamp and extract the models to persist
-        data_to_persist.sort(key=lambda d: d.get_message().header.timestamp)
         models_to_persist = []
+        data_to_persist.sort(key=lambda d: d.get_message().header.timestamp)
         for message_model_data_obj in data_to_persist:
             models_to_persist.append(message_model_data_obj.get_model())
 
+        print '**************************************'
         print 'Models to persist:'
-        print models_to_persist
+        for model in models_to_persist:
+            print model.chat_minute
+        print '**************************************'
+
         return models_to_persist
+
 
     def create_models(self, message):
         """
