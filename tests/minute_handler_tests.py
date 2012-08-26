@@ -1,14 +1,14 @@
 
 import os
 import sys
-
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../persistsvc"))
-sys.path.insert(0, PROJECT_ROOT)
-
 import unittest
-import logging
 
-from message_handler import ChatMinuteHandler
+SERVICE_NAME = "persistsvc"
+#Add SERVICE_ROOT to python path, for imports.
+SERVICE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../", SERVICE_NAME))
+sys.path.insert(0, SERVICE_ROOT)
+
+from message_handler import ChatMessageHandler, ChatMinuteHandler
 from topic_data_manager import TopicDataManager, TopicDataCollection, TopicData
 from topic_test_data import TopicTestDataSets, TopicTestData
 
@@ -23,7 +23,7 @@ class ChatMinuteHandlerTest(unittest.TestCase):
 
         data = TopicTestDataSets()
         cls.test_topic_datasets = data.get_list()
-        cls.test_session_id = 'dummy_session_id'
+        cls.chat_session_id = 'dummy_session_id'
 
     @classmethod
     def tearDownClass(cls):
@@ -33,7 +33,8 @@ class ChatMinuteHandlerTest(unittest.TestCase):
 
         for dataset in self.test_topic_datasets:
 
-            handler = ChatMinuteHandler(self.test_session_id, dataset.topic_collection)
+            message_handler = ChatMessageHandler(self.chat_session_id, dataset.topic_collection)
+            handler = message_handler.chat_minute_handler
             highest_leafs = handler._get_highest_ranked_leafs(dataset.topic_collection)
             expected_highest_leafs = dataset.expected_highest_leaf_list_by_rank
 
@@ -47,16 +48,19 @@ class ChatMinuteHandlerTest(unittest.TestCase):
 
         dataset_count = 0
         for dataset in self.test_topic_datasets:
+
             dataset_count += 1
-            print 'Processing dataset# %s' % dataset_count
-            handler = ChatMinuteHandler(self.test_session_id, dataset.topic_collection)
+            #print 'Processing dataset# %s' % dataset_count
+
+            message_handler = ChatMessageHandler(self.chat_session_id, dataset.topic_collection)
+            handler = message_handler.chat_minute_handler
             chat_minute_end_topic_chain = handler._get_chat_minute_end_topic_chain(dataset.topic_collection)
             expected_topic_chain = dataset.expected_chat_minute_end_topic_chain
 
-            print 'Topic Chain Output:'
             for key, value in chat_minute_end_topic_chain.items():
                 for topic in value:
-                    print 'key %s: %s' % (key, topic.id)
+                    #print 'key %s: %s' % (key, topic.id)
+                    pass
 
             # Verify topics
             self.assertEqual(

@@ -2,19 +2,12 @@ import abc
 import logging
 
 from persistsvc_exceptions import NoActiveChatMinuteException, \
-    DuplicateTagIdException, TagIdDoesNotExistException
+    DuplicateTagIdException, TagIdDoesNotExistException, \
+    TopicIdDoesNotExistException
 from trchatsvc.gen.ttypes import Message, MessageType, MarkerType
 from trsvcscore.db.models import ChatMinute, ChatSpeakingMarker,\
     ChatTag
 from trpycore.timezone import tz
-
-
-
-# Exceptional conditions
-#   8) Minute Create
-#   9) Topic ID not present in list of topics for this chat
-#   10)
-
 
 
 class MessageHandler(object):
@@ -179,11 +172,11 @@ class ChatMessageHandler(object):
         except DuplicateTagIdException as e:
             self.log.warning('Attempted to create tag with duplicate tagID=%s' % e.id)
         except NoActiveChatMinuteException as e:
-            # TODO We probably want to hanlde this differently depending on which handler it came from.
+            # TODO We probably want to handle this differently depending on which handler it came from.
             self.log.warning('Attempted to process chat message with no active chat minute')
 
 
-class ChatMinuteHandler(object):
+class ChatMinuteHandler(MessageHandler):
     """
         Handler for Chat Minute messages.
 
@@ -199,18 +192,21 @@ class ChatMinuteHandler(object):
     DEFAULT_MINUTE_START_TIME = 0
 
     def __init__(self, chat_message_handler):
-
-        #TODO no all minutes dict
-
-        self.message_handler = chat_message_handler
-        self.chat_session_id = chat_message_handler.chat_session_id
-        self.topics_collection = chat_message_handler.topics_collection
+        super(ChatMinuteHandler, self).__init__(chat_message_handler)
         self.log = logging.getLogger(__name__)
+        self.topics_collection = chat_message_handler.topics_collection
         self.active_minute = None
+
         # Maintain a map of topics to chat minute models
         self.topic_minute_map = {}   # {topic_id : chatMinute model}
+
+        # Maintain a dict which indicates which describes
+        # which parent topics each leaf topic is responsible
+        # for closing (setting the chat-minute's end time).
+        # { leaf_topic_id : [parent1_topic_id, parent2_topic_id, ...] }
         self.minute_end_topic_chain = self._get_chat_minute_end_topic_chain(self.topics_collection)
 
+        #TODO no all minutes dict
 
     def _get_highest_ranked_leafs(self, topics_collection):
         """
@@ -272,7 +268,6 @@ class ChatMinuteHandler(object):
                 current_topic = topics_collection.get_previous_topic(current_topic)
                 if current_topic is None:
                     break
-
 
             minute_end_topic_chain[topic.id] = topic_parents_to_end_list
 
@@ -349,6 +344,10 @@ class ChatMinuteHandler(object):
             Hook to allow any initialization to be completed
             before processing chat messages.
         """
+
+        # Create a ChatMinute object for each topic that exists.
+        # As the chat messages are processed each chat minute's
+        # start and end time will be modified.
         for topic in self.topics_collection.as_list_by_rank():
             minute = ChatMinute(
                 chat_session_id=self.chat_session_id,
@@ -372,10 +371,14 @@ class ChatMinuteHandler(object):
             Returns:
                 List of models to persist.
         """
-        ret = []
+        models_to_persist = []
         for model in self.topic_minute_map:
-            ret.append(model)
-        return ret
+            models_to_persist.append(model)
+
+        # Sort list by chat minute start time
+        models_to_persist.sort(key=lambda model: tz.utc_to_timestamp(model.start))
+
+        return models_to_persist
 
     def create_models(self, message):
         """
@@ -401,7 +404,6 @@ class ChatMinuteHandler(object):
 
             # Update previous topic's end-times
             self._end_previous_topic_minutes(topic_id, start_time)
-
 
     def update_models(self, message):
         """
@@ -440,6 +442,9 @@ class ChatMinuteHandler(object):
 
         return
 
+    def delete_models(self, message):
+        raise NotImplementedError
+
     def _is_valid_create_message(self, message):
         """
             Returns True if message should be persisted, returns False otherwise.
@@ -449,19 +454,19 @@ class ChatMinuteHandler(object):
         # Chat messages are guaranteed to be unique due to the message_id attribute that each
         # message possesses.  This means we can avoid a duplicate message ID check here.
 
-        # TODO add timestamp check to ensure it doesn't precede the previous minute?
+        topic_id = message.minuteCreateMessage.topicId
 
         # Topic ID must be present in the topic collection
-        topic_id = message.minuteCreateMessage.topicId
-        if topic_id in self.topics_collection.as_dict():
+        if topic_id not in self.topics_collection.as_dict():
+            raise TopicIdDoesNotExistException()
 
-            # We will only accept minute-create-messages when they pertain to leaf-topics.
-            # This is done because we couldn't rely upon the ordering of messages (e.g.
-            # the parent minute-create-msg arriving before the child's minute-create-msg).
-            # By only allowing minute-create-msgs from leaf topics we can manually create
-            # parent chat minutes.
-            if self.topics_collection.is_leaf_topic_by_id(topic_id):
-                ret = True
+        # We will only accept minute-create-messages when they pertain to leaf-topics.
+        # This is done because we couldn't rely upon the ordering of messages (e.g.
+        # the parent minute-create-msg arriving before the child's minute-create-msg).
+        # By only allowing minute-create-msgs from leaf topics we can manually create
+        # parent chat minutes.
+        if self.topics_collection.is_leaf_topic_by_id(topic_id):
+            ret = True
 
         return ret
 
@@ -476,13 +481,15 @@ class ChatMinuteHandler(object):
         topic_id = message.minuteUpdateMessage.topicId
 
         # Topic ID must be present in the topic collection
+        if topic_id not in self.topics_collection.as_dict():
+            raise TopicIdDoesNotExistException()
+
+        # Only update chat minutes when on leaf topics
         topic = self.topics_collection.as_dict().get(topic_id)
-        if topic is not None:
-            # Only update chat minutes when on leaf topics
-            if self.topics_collection.is_leaf_topic(topic):
-                # Only listening for the last chat minute msg in the chat
-                if self.topics_collection.get_next_topic(topic) is None:
-                    ret = True
+        if self.topics_collection.is_leaf_topic(topic):
+            # Only listening for the last chat minute msg in the chat
+            if self.topics_collection.get_next_topic(topic) is None:
+                ret = True
 
         return ret
 
@@ -883,7 +890,6 @@ class ChatTagHandler(MessageHandler):
                 ret = True
 
         return ret
-
 
 
 class MessageModelData(object):

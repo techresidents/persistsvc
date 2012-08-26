@@ -11,6 +11,9 @@ class DuplicateTagIdException(Exception):
 class TagIdDoesNotExistException(Exception):
     pass
 
+class TopicIdDoesNotExistException(Exception):
+    pass
+
 class NoActiveChatMinuteException(Exception):
     """ Exception to indicate there was no active chat minute
         when one was required.
