@@ -39,7 +39,7 @@ class ChatMarkerHandlerTest(IntegrationTestCase):
         test_topic_datasets = topic_data.get_list()
         # Get the topic collection that matches the captured chat messages below
         cls.topic_collection = test_topic_datasets[4].topic_collection
-        cls.chat_session_id = 32 # Random ID
+        cls.chat_session_id = 32000 # Random ID
         cls.db_session = cls.service.handler.get_database_session()
 
         # Deserialized Chat Messages from real Chat
