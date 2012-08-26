@@ -34,13 +34,15 @@ class ChatMarkerHandlerTest(IntegrationTestCase):
 
         IntegrationTestCase.setUpClass()
 
+        cls.db_session = cls.service.handler.get_database_session()
+
         # Data required to construct a ChatMessageHandler
+        cls.chat_session_id = 32000 # Random ID
         topic_data = TopicTestDataSets()
         test_topic_datasets = topic_data.get_list()
         # Get the topic collection that matches the captured chat messages below
         cls.topic_collection = test_topic_datasets[4].topic_collection
-        cls.chat_session_id = 32000 # Random ID
-        cls.db_session = cls.service.handler.get_database_session()
+
 
         # Deserialized Chat Messages from real Chat
         # Root
@@ -153,7 +155,7 @@ class ChatMarkerHandlerTest(IntegrationTestCase):
             message_handler.process(deserialized_msg)
 
         # Retrieve all speaking marker models
-        speaking_models = message_handler.chat_marker_handler.finalize()
+        speaking_models = marker_handler.finalize()
 
         # Ensure number of created models
         expected_number_speaking_models = 17
