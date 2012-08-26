@@ -122,6 +122,7 @@ class ChatTagHandlerTest(IntegrationTestCase):
             self.assertEqual(expected_tag_models[counter].deleted, actual_tag.deleted, fail_msg)
             self.assertEqual(expected_tag_models[counter].chat_minute.topic_id, actual_tag.chat_minute.topic_id, fail_msg)
             self.assertEqual(expected_tag_models[counter].chat_minute.start, actual_tag.chat_minute.start, fail_msg)
+            # TODO ensure not a bug somewhere related to this failure.
             self.assertEqual(expected_tag_models[counter].chat_minute.end, actual_tag.chat_minute.end, fail_msg)
 
     def test_createModels_singleTag(self):

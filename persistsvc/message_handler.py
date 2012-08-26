@@ -163,7 +163,8 @@ class ChatMessageHandler(object):
                 self.chat_minute_handler.update_models(message)
 
             elif message.header.type == MessageType.MARKER_CREATE:
-                self.log.debug('handling marker create message id=%s' % message.markerCreateMessage.markerId)
+                #self.log.debug('handling marker create message id=%s' % message.markerCreateMessage.markerId)
+                self.chat_marker_handler.create_models(message)
 
             elif message.header.type == MessageType.TAG_CREATE:
                 self.log.debug('handling tag create message id=%s' % message.tagCreateMessage.tagId)
@@ -177,6 +178,9 @@ class ChatMessageHandler(object):
             self.log.warning('Attempted to access tag with tagID=%s', e.id)
         except DuplicateTagIdException as e:
             self.log.warning('Attempted to create tag with duplicate tagID=%s' % e.id)
+        except NoActiveChatMinuteException as e:
+            # TODO We probably want to hanlde this differently depending on which handler it came from.
+            self.log.warning('Attempted to process chat message with no active chat minute')
 
 
 class ChatMinuteHandler(object):
@@ -482,12 +486,14 @@ class ChatMinuteHandler(object):
 
         return ret
 
-class ChatMarkerHandler(object):
+class ChatMarkerHandler(MessageHandler):
     """
         Handler for Chat Marker messages
 
         This class creates model instances
-        from chat marker messages.
+        from chat marker messages. Call finalize()
+        to return all created tag models after processing
+        all of a chat's messages.
 
         This class is responsible for
         defining and applying the business rules to handle
@@ -499,9 +505,9 @@ class ChatMarkerHandler(object):
 
 
     def __init__(self, chat_message_handler):
-        self.message_handler = chat_message_handler
+        super(ChatMarkerHandler, self).__init__(chat_message_handler)
         self.log = logging.getLogger(__name__)
-        self.all_markers = {}
+        self.all_markers = {}   # {markerID : data}
         self.speaking_state = {}
 
     def initialize(self):
@@ -526,9 +532,18 @@ class ChatMarkerHandler(object):
             Returns:
                 List of models to persist.
         """
-        return []
+        models_to_persist = []
+        for message_model_data_obj in self.all_markers.values():
+            model = message_model_data_obj.get_model()
+            if model is not None:
+                models_to_persist.append(model)
 
-    def create_model(self, message):
+        # Sort list by timestamp and return
+        models_to_persist.sort(key=lambda model: tz.utc_to_timestamp(model.start))
+
+        return models_to_persist
+
+    def create_models(self, message):
         """
             Create model instance
 
@@ -542,6 +557,8 @@ class ChatMarkerHandler(object):
             corresponding speaking-end message is received.  The reason
             this is done because in a chat with 3 users, the two users
             who are not speaking will generate duplicate speaking marker messages.
+
+            Models are created when the end-speaking marker is received.
         """
         created_model = None
 
@@ -550,7 +567,7 @@ class ChatMarkerHandler(object):
             # Only expecting & handling speaking markers
 
             # Get user's speaking state
-            user_id = message.header.userId
+            user_id = message.markerCreateMessage.marker.speakingMarker.userId
             user_speaking_data = None
             if user_id not in self.speaking_state:
                 user_speaking_data = SpeakingData(user_id)
@@ -577,16 +594,15 @@ class ChatMarkerHandler(object):
                     # Only persist speaking markers with significant duration
                     duration = user_speaking_data.calculate_speaking_duration()
                     if duration > self.SPEAKING_DURATION_THRESHOLD:
-                        chat_minute = self.message_handler.chat_minute_handler.get_active_minute()
-                        if chat_minute is not None:
-                            # TODO need to handle if there's no active chat minute yet?
-                            start_time = tz.timestamp_to_utc(user_speaking_data.get_start_timestamp())
-                            end_time = tz.timestamp_to_utc(user_speaking_data.get_end_timestamp())
-                            created_model = ChatSpeakingMarker(
-                                user_id=user_id,
-                                chat_minute=chat_minute,
-                                start=start_time,
-                                end=end_time)
+                        chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
+                        start_time = tz.timestamp_to_utc(user_speaking_data.get_start_timestamp())
+                        end_time = tz.timestamp_to_utc(user_speaking_data.get_end_timestamp())
+                        created_model = ChatSpeakingMarker(
+                            user_id=user_id,
+                            chat_minute=chat_minute,
+                            start=start_time,
+                            end=end_time)
+
                     # Reset user's speaking state
                     user_speaking_data.set_start_timestamp(None)
                     user_speaking_data.set_end_timestamp(None)
@@ -599,17 +615,34 @@ class ChatMarkerHandler(object):
         marker_data = MessageModelData(message.markerCreateMessage.markerId, message, created_model)
         self.all_markers[marker_data.id] = marker_data
 
+    def update_models(self, message):
+        raise NotImplementedError
+
+    def delete_models(self, message):
+        raise NotImplementedError
 
     def _is_valid_message(self, message):
         """
-            Returns True if message should be persisted, returns False otherwise.
+         Only passes speaking markers.
 
-            Only passes speaking markers.
+            Args:
+                message: deserialized Thrift Message
+
+            Returns:
+             True if message should be persisted, False otherwise.
+
+            Throws:
+                NoActiveChatMinuteException
         """
         ret = False
 
         # Chat messages are guaranteed to be unique due to the message_id attribute that each
         # message possesses.  This means we can avoid a duplicate message ID check here.
+
+        # If there is no active ChatMinute then reject this message
+        chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
+        if chat_minute is None:
+            raise NoActiveChatMinuteException()
 
         if message.markerCreateMessage.marker.type == MarkerType.SPEAKING_MARKER:
             ret = True

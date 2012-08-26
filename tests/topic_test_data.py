@@ -205,8 +205,34 @@ class TopicTestDataSets(object):
             TopicDataCollection(topic_list_by_rank)
         )
 
+        #
+        # Dataset #5
+        #
+        # Root
+        #   T1
+        #
+        root = TopicData(topic_id=1, parent_id=None, rank=0, level=1, title='Root', description='')
+        t1   = TopicData(topic_id=2, parent_id=1,    rank=1, level=2, title='t1',   description='')
+        topic_list_by_rank = [root, t1]
+        leaf_list_by_rank = [t1]
+        highest_leaf_list_by_rank = [t1]
+        chat_minute_end_topic_chain = {
+            t1.id : [root]
+        }
+        topic_dict = {
+            root.id : root,
+            t1.id : t1
+        }
+        dataset5 = TopicTestData(
+            topic_list_by_rank,
+            leaf_list_by_rank,
+            highest_leaf_list_by_rank,
+            chat_minute_end_topic_chain,
+            topic_dict,
+            TopicDataCollection(topic_list_by_rank)
+        )
 
-        self.test_topic_data_sets = [dataset1, dataset2, dataset3, dataset4]
+        self.test_topic_data_sets = [dataset1, dataset2, dataset3, dataset4, dataset5]
 
     def get_list(self):
         return self.test_topic_data_sets
