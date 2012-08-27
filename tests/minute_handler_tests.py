@@ -9,9 +9,11 @@ SERVICE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../", SE
 sys.path.insert(0, SERVICE_ROOT)
 
 from trpycore.timezone import tz
+from trsvcscore.db.models import ChatMinute
 
 from chat_test_data import ChatTestDataSets
 from message_handler import ChatMessageHandler, ChatMinuteHandler
+from persistsvc_exceptions import InvalidChatMinuteException
 from topic_data_manager import TopicDataManager, TopicDataCollection, TopicData
 from topic_test_data import TopicTestDataSets
 
@@ -73,12 +75,16 @@ class ChatMinuteHandlerTest(unittest.TestCase):
                 chat_minute_end_topic_chain
             )
 
-    def test_createModels(self):
+    def test_chatMinuteHandler(self):
+        """ Sends input deserialized Thrift messages into
+        the ChatMessageHandler and verifies the output
+        ChatMinute objects.
+        """
 
         # Get chat data
         chat_data = self.test_chat_datasets[0]
 
-        # Create ChatTagHandler
+        # Create ChatMinuteHandler
         message_handler = ChatMessageHandler(chat_data.chat_session_id, chat_data.topic_collection)
         minute_handler = message_handler.chat_minute_handler
 
@@ -106,6 +112,34 @@ class ChatMinuteHandlerTest(unittest.TestCase):
             self.assertEqual(expected_models[index].topic_id, model.topic_id)
             self.assertEqual(expected_models[index].start, model.start)
             self.assertEqual(expected_models[index].end, model.end)
+
+    def test_createModels_invalidMinute(self):
+
+        # Get chat data
+        chat_data = self.test_chat_datasets[0]
+
+        # Create ChatMinuteHandler
+        message_handler = ChatMessageHandler(chat_data.chat_session_id, chat_data.topic_collection)
+        minute_handler = message_handler.chat_minute_handler
+
+        # Create the real ChatTag
+        message = chat_data.message_list[27]
+        minute_handler.create_models(message)
+        with self.assertRaises(InvalidChatMinuteException):
+            minute_handler.finalize()
+
+    def test_deleteModels(self):
+
+        # Get chat data
+        chat_data = self.test_chat_datasets[0]
+
+        # Create ChatTagHandler
+        message_handler = ChatMessageHandler(chat_data.chat_session_id, chat_data.topic_collection)
+        minute_handler = message_handler.chat_minute_handler
+
+        with self.assertRaises(NotImplementedError):
+            minute_handler.delete_models(None)
+
 
 
 if __name__ == '__main__':

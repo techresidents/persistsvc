@@ -1,4 +1,6 @@
 
+
+
 class DuplicatePersistJobException(Exception):
     """ Duplicate Persist Job Exception class"""
     pass
@@ -8,10 +10,10 @@ class DuplicateTagIdException(Exception):
     def __init__(self, tag_id):
         self.id = tag_id
 
-class TagIdDoesNotExistException(Exception):
-    pass
-
-class TopicIdDoesNotExistException(Exception):
+class InvalidChatMinuteException(Exception):
+    """ Indicates that the ChatMinuteHandler returned
+    an invalid ChatMinute object.
+    """
     pass
 
 class NoActiveChatMinuteException(Exception):
@@ -19,3 +21,10 @@ class NoActiveChatMinuteException(Exception):
         when one was required.
     """
     pass
+
+class TagIdDoesNotExistException(Exception):
+    pass
+
+class TopicIdDoesNotExistException(Exception):
+    pass
+

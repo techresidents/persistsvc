@@ -15,8 +15,6 @@ from message_handler import ChatMessageHandler, ChatTagHandler
 from persistsvc_exceptions import DuplicateTagIdException, NoActiveChatMinuteException,\
     TagIdDoesNotExistException
 from testbase import IntegrationTestCase
-from topic_test_data import TopicTestDataSets
-
 
 
 class ChatMarkerHandlerTest(IntegrationTestCase):

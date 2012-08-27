@@ -10,7 +10,7 @@ from trchatsvc.gen.ttypes import Message, MessageHeader, MessageRoute,\
     TagCreateMessage, TagDeleteMessage,\
     StartedMarker, EndedMarker
 from trpycore.timezone import tz
-from trsvcscore.db.models import ChatMinute, ChatSpeakingMarker, ChatTag
+from trsvcscore.db.models import ChatMinute, ChatTag
 
 SERVICE_NAME = "persistsvc"
 

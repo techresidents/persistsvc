@@ -1,8 +1,11 @@
 import abc
 import logging
 
-from persistsvc_exceptions import NoActiveChatMinuteException, \
-    DuplicateTagIdException, TagIdDoesNotExistException, \
+from persistsvc_exceptions import \
+    DuplicateTagIdException, \
+    InvalidChatMinuteException,\
+    NoActiveChatMinuteException, \
+    TagIdDoesNotExistException, \
     TopicIdDoesNotExistException
 from trchatsvc.gen.ttypes import Message, MessageType, MarkerType
 from trsvcscore.db.models import ChatMinute, ChatSpeakingMarker,\
@@ -106,7 +109,6 @@ class ChatMessageHandler(object):
         This handler is responsible for:
             1) Filtering out messages that don't need to be persisted
             2) Creating model instances from chat messages
-            3) Persisting model instances
     """
     def __init__(self, chat_session_id, topics_collection):
         self.log = logging.getLogger(__name__)
@@ -156,7 +158,7 @@ class ChatMessageHandler(object):
                 self.chat_minute_handler.update_models(message)
 
             elif message.header.type == MessageType.MARKER_CREATE:
-                #self.log.debug('handling marker create message id=%s' % message.markerCreateMessage.markerId)
+                self.log.debug('handling marker create message id=%s' % message.markerCreateMessage.markerId)
                 self.chat_marker_handler.create_models(message)
 
             elif message.header.type == MessageType.TAG_CREATE:
@@ -206,7 +208,6 @@ class ChatMinuteHandler(MessageHandler):
         # { leaf_topic_id : [parent1_topic_id, parent2_topic_id, ...] }
         self.minute_end_topic_chain = self._get_chat_minute_end_topic_chain(self.topics_collection)
 
-        #TODO no all minutes dict
 
     def _get_highest_ranked_leafs(self, topics_collection):
         """
@@ -368,13 +369,22 @@ class ChatMinuteHandler(MessageHandler):
             to have all chat messages before determining which models
             to persist.
 
+            Throws:
+                Raises a InvalidChatMinuteException if any of the
+                ChatMinute models are invalid (e.g. No start time
+                or no end time specified).
+
             Returns:
                 List of models to persist ordered by topic rank
         """
         models_to_persist = []
 
         for topic in self.topics_collection.as_list_by_rank():
-            models_to_persist.append(self.topic_minute_map[topic.id])
+            model = self.topic_minute_map[topic.id]
+            if model.start == self.DEFAULT_MINUTE_START_TIME or\
+               model.end is None:
+                raise InvalidChatMinuteException()
+            models_to_persist.append(model)
 
         return models_to_persist
 
@@ -506,13 +516,13 @@ class ChatMarkerHandler(MessageHandler):
         """
 
     SPEAKING_DURATION_THRESHOLD = 0 # Persist all speaking markers
-    #TODO Jeff wanted to detect if the current speaking marker was too large
+    #TODO Jeff wanted to detect if the current speaking marker gets too large
 
 
     def __init__(self, chat_message_handler):
         super(ChatMarkerHandler, self).__init__(chat_message_handler)
         self.log = logging.getLogger(__name__)
-        self.all_markers = {}   # {markerID : data}
+        self.all_markers = {}   # {markerID : MessageModelData}
         self.speaking_state = {}
 
     def initialize(self):
@@ -671,7 +681,7 @@ class ChatTagHandler(MessageHandler):
     def __init__(self, chat_message_handler):
         super(ChatTagHandler, self).__init__(chat_message_handler)
         self.log = logging.getLogger(__name__)
-        self.all_tags = {}   # {tag_id : MessageData}
+        self.all_tags = {}   # {tag_id : MessageModelData}
 
         # Create nested dict to ensure only unique tags are persisted.
         # Tags are considered unique across (user, minute, tag-name)
