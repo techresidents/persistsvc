@@ -128,6 +128,46 @@ class ChatMinuteHandlerTest(unittest.TestCase):
         with self.assertRaises(InvalidChatMinuteException):
             minute_handler.finalize()
 
+    def test_updateModels(self):
+
+        # Get chat data
+        chat_data = self.test_chat_datasets[0]
+
+        # Create ChatMinuteHandler
+        message_handler = ChatMessageHandler(chat_data.chat_session_id, chat_data.topic_collection)
+        minute_handler = message_handler.chat_minute_handler
+
+        # Set the start time on the chat minutes (Root, Topic1)
+        message = chat_data.message_list[27]
+        message_handler.process(message)
+
+        # Since the end-time's have not been written, an exception should be raised
+        with self.assertRaises(InvalidChatMinuteException):
+            minute_handler.finalize()
+
+        # Set the end time on the chat minutes (Root, Topic1)
+        message = chat_data.message_list[64]
+        message_handler.process(message)
+        minute_models = minute_handler.finalize()
+
+        # Ensure number of created models
+        self.assertEqual(len(chat_data.expected_minute_models), len(minute_models))
+
+        # Ensure models are returned in chronological order
+        prev_model_start = 0
+        for model in minute_models:
+            model_start = tz.utc_to_timestamp(model.start)
+            self.assertGreaterEqual(model_start, prev_model_start)
+            prev_model_start = model_start
+
+        # Check model data
+        expected_models = chat_data.expected_minute_models
+        for index, model in enumerate(minute_models):
+            self.assertEqual(expected_models[index].chat_session_id, model.chat_session_id)
+            self.assertEqual(expected_models[index].topic_id, model.topic_id)
+            self.assertEqual(expected_models[index].start, model.start)
+            self.assertEqual(expected_models[index].end, model.end)
+
     def test_deleteModels(self):
 
         # Get chat data
