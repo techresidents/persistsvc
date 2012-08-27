@@ -155,8 +155,9 @@ class ChatTestDataSets(object):
         m = ChatSpeakingMarker(
             user_id=13,
             chat_minute=chat_minute_list[1],
-            start=None,
-            end=None)
+            start=None, # Punted on verifying start times of these models
+            end=None) # Punted on verifying end time of these models
+
         # Create 17 speaking markers. In this case, they will all
         # have the same user_id and chat_minute.
         list = [m, m, m, m, m,
