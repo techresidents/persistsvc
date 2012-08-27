@@ -132,8 +132,8 @@ class ChatMessageHandler(object):
                 List of models to persist.
         """
         ret = []
-        ret.extend(self.chat_marker_handler.finalize())
         ret.extend(self.chat_minute_handler.finalize())
+        ret.extend(self.chat_marker_handler.finalize())
         ret.extend(self.chat_tag_handler.finalize())
         return ret
 
@@ -288,7 +288,7 @@ class ChatMinuteHandler(MessageHandler):
 
     def _start_parent_topic_minutes(self, topic_id, start_time):
         """
-            Method responsible for setting the start timestamp on
+            Method responsible for setting the start time on
             parent topic chat minutes.
 
             This method will traverse backward through the ordered
@@ -369,14 +369,12 @@ class ChatMinuteHandler(MessageHandler):
             to persist.
 
             Returns:
-                List of models to persist.
+                List of models to persist ordered by topic rank
         """
         models_to_persist = []
-        for model in self.topic_minute_map:
-            models_to_persist.append(model)
 
-        # Sort list by chat minute start time
-        models_to_persist.sort(key=lambda model: tz.utc_to_timestamp(model.start))
+        for topic in self.topics_collection.as_list_by_rank():
+            models_to_persist.append(self.topic_minute_map[topic.id])
 
         return models_to_persist
 
