@@ -48,27 +48,26 @@ class ChatPersister(object):
 
     def persist(self):
         """ This method is responsible for persisting
-            chat message data
+            chat message data.
 
-            Only data we plan on consuming is being persisted.
+            Only data we plan on consuming is currently
+            being persisted.
         """
         try:
             self._start_chat_persist_job()
-
-            db_session = self.create_db_session()
-            self._persist_data(db_session)
-
+            self._persist_data()
             self._end_chat_persist_job()
+
         except DuplicatePersistJobException as warning:
             self.log.warning("Chat persist job with job_id=%d already claimed. Stopping processing." % self.job_id)
             # This means that the PersistJob was claimed just before
             # this thread claimed it. Stop processing the job. There's
             # no need to abort the job since no processing of the job
             # has occurred.
-        except Exception as error:
-            db_session.rollback()
-            self.log.exception(error)
+
+        except Exception as e:
             self._abort_chat_persist_job()
+
 
     def _start_chat_persist_job(self):
         """Start processing the chat persist job.
@@ -78,24 +77,34 @@ class ChatPersister(object):
         """
         self.log.info("Starting chat persist job with job_id=%d ..." % self.job_id)
 
-        db_session = self.create_db_session()
+        try:
+            db_session = self.create_db_session()
 
-        # This query.update generates the following sql:
-        # UPDATE chat_persist_job SET owner='persistsvc' WHERE
-        # chat_persist_job.id = 1 AND chat_persist_job.owner IS NULL
-        num_rows_updated = db_session.query(ChatPersistJob).\
-            filter(ChatPersistJob.id==self.job_id).\
-            filter(ChatPersistJob.owner==None).\
-            update({
-                ChatPersistJob.owner: 'persistsvc',
-                ChatPersistJob.start: tz.utcnow()
-            })
+            # This query.update generates the following sql:
+            # UPDATE chat_persist_job SET owner='persistsvc' WHERE
+            # chat_persist_job.id = 1 AND chat_persist_job.owner IS NULL
+            num_rows_updated = db_session.query(ChatPersistJob).\
+                filter(ChatPersistJob.id==self.job_id).\
+                filter(ChatPersistJob.owner==None).\
+                update({
+                    ChatPersistJob.owner: 'persistsvc',
+                    ChatPersistJob.start: tz.utcnow()
+                })
 
-        if (not num_rows_updated):
-            raise DuplicatePersistJobException()
+            if not num_rows_updated:
+                raise DuplicatePersistJobException()
 
-        db_session.commit()
-        # db_session.close() TODO
+            db_session.commit()
+
+        except DuplicatePersistJobException as e:
+            # No data was modified in the db so no need to rollback.
+            raise e
+        except Exception as e:
+            self.log.exception(e)
+            db_session.rollback()
+            raise e
+        finally:
+            db_session.close()
 
     def _end_chat_persist_job(self):
         """End processing of the ChatPersistJob.
@@ -104,11 +113,19 @@ class ChatPersister(object):
         field with the current time.
         """
         self.log.info("Ending chat persist job with job_id=%d ..." % self.job_id)
-        db_session = self.create_db_session()
-        job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
-        job.end = func.current_timestamp()
-        db_session.commit()
-        # db_session.close() TODO
+
+        try:
+            db_session = self.create_db_session()
+            job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
+            job.end = func.current_timestamp()
+            job.successful = True
+            db_session.commit()
+        except Exception as e:
+            self.log.exception(e)
+            db_session.rollback()
+            raise e
+        finally:
+            db_session.close()
 
     def _abort_chat_persist_job(self):
         """Abort the ChatPersistJob.
@@ -116,17 +133,22 @@ class ChatPersister(object):
         Abort the current persist job. Reset the 'start' column and
         'owner' column to NULL.
         """
-        self.log.error("Aborting chat persist job with job_id=%d ..." % self.job_id)
-        db_session = self.create_db_session()
-        job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
-        job.start = None
-        job.owner = None
-        db_session.commit()
-        # db_session.close() TODO
         # TODO: Monitor thread is stopping after abort is called.
-        # TODO: What happens if this function throws?
 
-    def _persist_data(self, db_session):
+        self.log.error("Aborting chat persist job with job_id=%d ..." % self.job_id)
+
+        try:
+            db_session = self.create_db_session()
+            job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
+            job.successful = False
+            db_session.commit()
+        except Exception as e:
+            self.log.error(e)
+            db_session.rollback()
+        finally:
+            db_session.close()
+
+    def _persist_data(self):
         """Persist chat data to the db
 
         This method will create the necessary chat minutes, tags,
@@ -134,10 +156,13 @@ class ChatPersister(object):
         that were created by the chat service.
         """
         try:
+            db_session = self.create_db_session()
+
             # Retrieve the chat session id
             job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
             self.chat_session_id = job.chat_session.id
 
+            # Specify the format of the msg data
             thrift_b64_format_id = db_session.query(ChatMessageFormatType).\
                 filter(ChatMessageFormatType.name=='THRIFT_BINARY_B64').\
                 one().\
@@ -181,11 +206,14 @@ class ChatPersister(object):
 
             # commit all db changes
             db_session.commit()
-            # db_session.close() TODO
 
-        except Exception:
+        except Exception as e:
+            self.log.exception(e)
             db_session.rollback()
-            raise
+            raise e
+        finally:
+            db_session.close()
+
 
 class ChatPersisterThreadPool(ThreadPool):
     """Thread pool used to process chat persist jobs.
@@ -264,28 +292,32 @@ class ChatPersistJobMonitor(object):
             try:
                 self.log.info("ChatPersistJobMonitor is checking for new jobs to process...")
 
-                #Look for ChatPersistJobs with no owner.
-                #This indicates a job which
-                #needs to be processed.
+                # Look for ChatPersistJobs with no owner and no start time.
+                # This indicates a job which needs to be processed.
                 for job in session.query(ChatPersistJob).\
-                        filter(ChatPersistJob.owner == None):
+                        filter(ChatPersistJob.owner == None).\
+                        filter(ChatPersistJob.start == None):
 
-                    #delegate jobs to threadpool for processing
+                    # delegate jobs to threadpool for processing
                     self.threadpool.put(job.id)
 
-                #commit is required so changes to db will be
-                #reflected (MVCC).
+                # commit is required so changes to db will be
+                # reflected (MVCC).
                 session.commit()
 
             except Exception as error:
                 session.rollback()
                 self.log.exception(error)
+
+            finally:
+                session.close()
             
-            #Acquire exit conditional variable
-            #and call wait on this to sleep the
-            #necessary time between db checks.
-            #waiting on a cv, allows the wait to be
-            #interuppted when stop() is called.
+            # Acquire exit conditional variable
+            # and call wait on this to sleep the
+            # necessary time between db checks.
+            # Waiting on a conditional variable,
+            # allows the wait to be interrupted
+            # when stop() is called.
             with self.exit:
                 end = time.time() + self.poll_seconds
                 #wait in loop, rechecking condition,
@@ -298,7 +330,7 @@ class ChatPersistJobMonitor(object):
         """Stop persister."""
         if self.running:
             self.running = False
-            #acquire cv and wake up monitorThread run method.
+            #acquire conditional variable and wake up monitorThread run method.
             with self.exit:
                 self.exit.notify_all()
             self.threadpool.stop()

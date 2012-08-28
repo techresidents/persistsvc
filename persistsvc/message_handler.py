@@ -150,11 +150,18 @@ class ChatMessageHandler(object):
             based upon the chat message's type.
 
             This method is the orchestrator of persisting all the chat entities
-            that need to be stored.  Some handlers input one message and
-            return multiple models to be persisted.
+            that need to be stored from a chat.  Chat messages should be
+            processed in chronological order to satisfy any ordering dependencies
+            that may exist between messages (e.g. ChatTags require a reference
+            to the active ChatMinute).
 
             Args:
                 Deserialized Thrift Message
+
+            Throws:
+                NoActiveChatMinuteException if a msg which is being
+                processed requires an active chat minute but none
+                is present.
 
         """
         try:
