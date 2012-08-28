@@ -80,6 +80,13 @@ class ChatMarkerHandlerTest(IntegrationTestCase):
         message_handler.chat_minute_handler._set_active_minute(None)
         marker_handler = message_handler.chat_marker_handler
 
+        # Process chat-started message to indicate that the active minute
+        # should now never be None
+        self.assertEqual(False, marker_handler.is_chat_started)
+        message = chat_data.message_list[28]
+        marker_handler.create_models(message)
+        self.assertEqual(True, marker_handler.is_chat_started)
+
         # Test create_models
         message = chat_data.message_list[31] # Get a speaking marker message
         with self.assertRaises(NoActiveChatMinuteException):

@@ -101,8 +101,14 @@ class MessageHandler(object):
 
 class ChatMessageHandler(object):
     """
-        Handler to process a chat message by creating the associated
-        entity (Tag, Minute, Marker, etc) and storing it in the db.
+        Handler to process chat messages and create the associated
+        models (Tag, Minute, Marker, etc) that should be persisted
+        in the db.
+
+        A new instance should be created for each chat that needs to
+        be processed.  After processing all messages in a chat,
+        invoke finalize() to return all models that should be
+        persisted in the db.
 
         This handler is responsible for:
             1) Filtering out messages that don't need to be persisted
@@ -126,7 +132,8 @@ class ChatMessageHandler(object):
 
     def finalize(self):
         """
-            Invoke to indicate that all chat messages have been consumed.
+            Invoke to indicate that all chat messages
+            of a chat have been consumed.
 
             Returns:
                 List of models to persist.
@@ -139,12 +146,16 @@ class ChatMessageHandler(object):
 
     def process(self, message):
         """
-            Converts input deserialized Thrift Message to a model instance based upon the
-            chat message's type.
+            Converts input deserialized Thrift Message to a model instance(s)
+            based upon the chat message's type.
 
             This method is the orchestrator of persisting all the chat entities
             that need to be stored.  Some handlers input one message and
             return multiple models to be persisted.
+
+            Args:
+                Deserialized Thrift Message
+
         """
         try:
             if message.header.type == MessageType.MINUTE_CREATE:
@@ -168,12 +179,9 @@ class ChatMessageHandler(object):
                 self.chat_tag_handler.delete_models(message)
 
         except TagIdDoesNotExistException as e:
-            self.log.warning('Attempted to access tag with tagID=%s', e.id)
+            self.log.warning('Attempted to access tag that does not exist with tagID=%s', e.id)
         except DuplicateTagIdException as e:
             self.log.warning('Attempted to create tag with duplicate tagID=%s' % e.id)
-        except NoActiveChatMinuteException as e:
-            # TODO We probably want to handle this differently depending on which handler it came from.
-            self.log.warning('Attempted to process chat message with no active chat minute')
 
 
 class ChatMinuteHandler(MessageHandler):
@@ -577,6 +585,7 @@ class ChatMarkerHandler(MessageHandler):
         self.log = logging.getLogger(__name__)
         self.all_markers = {}   # {markerID : MessageModelData}
         self.speaking_state = {}
+        self.is_chat_started = False
 
     def initialize(self):
         """
@@ -624,7 +633,18 @@ class ChatMarkerHandler(MessageHandler):
         """
         created_model = None
 
-        if self._is_valid_message(message):
+        # Listen for a chat-start message so that we can know
+        # if the active chat minute becomes invalid while
+        # processing the other marker messages.
+        #
+        # Note that it's possible that the first create-chat-minute msg
+        # will be received prior to the chat-started msg. If this is the
+        # case, we still properly process marker messages.
+        #
+        if not self.is_chat_started and self._is_valid_start_chat_marker_message(message):
+            self.is_chat_started = True
+
+        elif self._is_valid_create_speaking_marker_message(message):
 
             # Only expecting & handling speaking markers
 
@@ -683,6 +703,7 @@ class ChatMarkerHandler(MessageHandler):
             # Update state
             self.speaking_state[user_id] = user_speaking_data
 
+
         # Store message and its associated model
         marker_data = MessageModelData(message.markerCreateMessage.markerId, message, created_model)
         self.all_markers[marker_data.id] = marker_data
@@ -693,7 +714,7 @@ class ChatMarkerHandler(MessageHandler):
     def delete_models(self, message):
         raise NotImplementedError
 
-    def _is_valid_message(self, message):
+    def _is_valid_create_speaking_marker_message(self, message):
         """
          Only passes speaking markers.
 
@@ -704,19 +725,42 @@ class ChatMarkerHandler(MessageHandler):
              True if message should be persisted, False otherwise.
 
             Throws:
-                NoActiveChatMinuteException
+                NoActiveChatMinuteException if the chat-start marker
+                has been received and the active minute is None.
         """
         ret = False
 
         # Chat messages are guaranteed to be unique due to the message_id attribute that each
         # message possesses.  This means we can avoid a duplicate message ID check here.
 
-        # If there is no active ChatMinute then reject this message
+        # If the chat has been started and there is no active ChatMinute then something is wrong
         chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
-        if chat_minute is None:
+        if self.is_chat_started and chat_minute is None:
             raise NoActiveChatMinuteException()
 
-        if message.markerCreateMessage.marker.type == MarkerType.SPEAKING_MARKER:
+        elif chat_minute is not None:
+            if message.markerCreateMessage.marker.type == MarkerType.SPEAKING_MARKER:
+                ret = True
+
+        return ret
+
+    def _is_valid_start_chat_marker_message(self, message):
+        """
+         Only passes chat start markers.
+
+            Args:
+                message: deserialized Thrift Message
+
+            Returns:
+             True if message is a chat-start marker
+
+        """
+        ret = False
+
+        # Chat messages are guaranteed to be unique due to the message_id attribute that each
+        # message possesses.  This means we can avoid a duplicate message ID check here.
+
+        if message.markerCreateMessage.marker.type == MarkerType.STARTED_MARKER:
             ret = True
 
         return ret
@@ -855,6 +899,7 @@ class ChatTagHandler(MessageHandler):
 
             Throws:
                 NoActiveChatMinuteException
+                TagIdDoesNotExistException
         """
         deleted_model = None
 
