@@ -47,11 +47,9 @@ class MessageHandler(object):
         """Hook to allow any operations to be completed
         after all chat messages have been consumed.
 
-        Some handlers may only return models to be persisted when
-        this method is called due to the requirement to de-duplicate
-        data or perform other operations which require the handler
-        to have all chat messages before determining which models
-        to persist.
+        This method is also responsible for returning
+        all models to persist. It should be called
+        after processing all messages in a chat.
 
         Returns:
             List of models to persist.
@@ -182,8 +180,10 @@ class ChatMinuteHandler(MessageHandler):
     """
         Handler for Chat Minute messages.
 
-        This class creates model instances
-        from chat minute messages.
+        This class creates/updates/deletes ChatMinute model instances.
+        Each instance of this class should be used to process
+        all messages from a chat.  Call finalize() after processing
+        all messages to return all models to persist.
 
         This class is responsible for
         defining and applying the business rules to handle
@@ -197,6 +197,9 @@ class ChatMinuteHandler(MessageHandler):
         super(ChatMinuteHandler, self).__init__(chat_message_handler)
         self.log = logging.getLogger(__name__)
         self.topics_collection = chat_message_handler.topics_collection
+
+        # Maintain the active chat minute
+        # Chat messages are expected to be consumed in chronological order.
         self.active_minute = None
 
         # Maintain a map of topics to chat minute models
@@ -227,6 +230,9 @@ class ChatMinuteHandler(MessageHandler):
 
                 The highest ranked leafs here are:
                 [Topic3, Topic4]
+
+            Args:
+                topics_collection: the chat's associated TopicCollection
         """
         ret = []
         leaf_list = topics_collection.get_leaf_list_by_rank()
@@ -240,8 +246,23 @@ class ChatMinuteHandler(MessageHandler):
     def _get_chat_minute_end_topic_chain(self, topics_collection):
         """
             Method to create a topic chain dictionary which describes
-            which parent topics each leaf topic is responsible for closing
+            which parent topics each leaf topic is responsible for 'closing'
             (setting the chat-minute-end time).
+
+            As a simple example, consider the following topic hierarchy:
+
+                Root
+                    Topic1
+                    Topic2
+                        Topic3
+                    Topic4
+
+                The output dictionary would be:
+                { Topic3.id : [Topic2],
+                  Topic4.id : [Root]}
+
+            Args:
+                topics_collection: the chat's associated TopicCollection
         """
         minute_end_topic_chain = {}
         leaf_list = topics_collection.get_leaf_list_by_rank()
@@ -250,7 +271,8 @@ class ChatMinuteHandler(MessageHandler):
 
             # We need to match the closing level of each leaf's next-topic.
             next_topic = topics_collection.get_next_topic(topic)
-            # Close up to root level for last leaf topic in topic hierarchy
+
+            # Close up to root level for the last leaf topic in topic hierarchy
             root_topic_level = 1
             level_to_close = next_topic.level if next_topic is not None else root_topic_level
 
@@ -260,7 +282,7 @@ class ChatMinuteHandler(MessageHandler):
             current_closing_level = topic.level
             while current_topic.level >= level_to_close:
                 if current_topic not in leaf_list:
-                    # We only want parents. No children allowed
+                    # We only want parents. No children allowed.
                     if current_topic.level < current_closing_level:
                         # There will only ever be one topic per level that we need to close.
                         # Thus, every time we add a parent, decrement the current level.
@@ -292,10 +314,14 @@ class ChatMinuteHandler(MessageHandler):
             Method responsible for setting the start time on
             parent topic chat minutes.
 
-            This method will traverse backward through the ordered
-            topic list (ordered by increasing rank (1,2,etc)) starting
-            at the topic passed in, and start any parent topics
-            that have not yet been started.
+            This method will traverse backward through the
+            topic list ordered by increasing rank.
+            It will begin at the topic passed in and
+            start any parent topics that have not yet been started.
+
+            Args:
+                topic_id: the topic ID of the newly started topic
+                start_time: the start time to apply
         """
         topics = self.topics_collection.as_dict()
         topic = topics[topic_id]
@@ -315,11 +341,18 @@ class ChatMinuteHandler(MessageHandler):
 
     def _end_previous_topic_minutes(self, topic_id, end_time):
         """
-            Method responsible for setting the end timestamp on
-            chat minutes.
+            Method responsible for setting the end time on
+            chat minutes. This method will find the topics that need
+            to be 'closed' by keying off of the input leaf topic.
 
-            This method will find the topics that need
-            to be closed by keying off of the input topic.
+            This method is expected to be called when each next leaf
+            topic is started. It is not expected to be called for
+            the very last leaf topic since there will be no next
+            topic started.
+
+            Args:
+                topic_id: the topic ID of newly started topic
+                end_time: the end time to apply
         """
 
         # We start at the previous leaf topic because only leaf topics
@@ -337,8 +370,6 @@ class ChatMinuteHandler(MessageHandler):
                 for topic in parent_topics_to_end:
                     minute = self.topic_minute_map[topic.id]
                     minute.end = end_time
-
-        return
 
     def initialize(self):
         """
@@ -363,11 +394,9 @@ class ChatMinuteHandler(MessageHandler):
             Hook to allow any operations to be completed
             after all chat messages have been consumed.
 
-            Some handlers may only return models to be persisted when
-            this method is called due to the requirement to de-duplicate
-            data or perform other operations which require the handler
-            to have all chat messages before determining which models
-            to persist.
+            This method is also responsible for returning
+            all models to persist. It should be called
+            after processing all messages in a chat.
 
             Throws:
                 Raises a InvalidChatMinuteException if any of the
@@ -390,12 +419,17 @@ class ChatMinuteHandler(MessageHandler):
 
     def create_models(self, message):
         """
-            Create model instance(s) from Thrift Message
+            Create model instance(s) from input message.
+            Need to call finalize() after processing
+            all the message in a chat to get the created
+            instances.
 
-            Returns None if creation failed.
-            Creation can fail if the input message fails to pass biz rules filter.
+            Args:
+                message: Deserialized Thrift Message
+
+            Throws:
+                TopicIdDoesNotExistException
         """
-
         # Create models from message
         if self._is_valid_create_message(message):
 
@@ -419,18 +453,25 @@ class ChatMinuteHandler(MessageHandler):
 
             This method is responsible for listening for a
             MinuteUpdateMessage on the last topic in a chat.
-            Once received, this method will generate an
+            Once received, this method will generate
             end-timestamps for the ChatMinute's that require it
-            (the root topic and any parents of the final topic).
+            (the root topic and any parents of the final leaf topic).
 
             Note that for all other topics, the end-timestamps
-            are written when a new minuteCreateMessage comes in.
-            The reason that messages are processed this
+            are written when a new minuteCreateMessage comes in
+            via create_models().The reason that messages are processed this
             way is that the message order of minuteStart and minuteEnd
             messages was not guaranteed to be in chronological order
-            since the timestamps between these successive messages
-            was so close in time (any network latency in one message
+            since the time between these successive messages
+            was so close (any network latency in one message
             but not the other was enough to change the order).
+
+            Args:
+                message: Deserialized Thrift Message
+
+            Throws:
+                TopicIdDoesNotExistException
+
         """
         if self._is_valid_update_message(message):
 
@@ -448,14 +489,19 @@ class ChatMinuteHandler(MessageHandler):
                 minute = self.topic_minute_map[topic.id]
                 minute.end = end_time
 
-        return
-
     def delete_models(self, message):
         raise NotImplementedError
 
     def _is_valid_create_message(self, message):
         """
-            Returns True if message should be persisted, returns False otherwise.
+            Args:
+                message: deserialized Thrift Message
+
+            Returns:
+                True if message should be persisted, False otherwise.
+
+            Throws:
+                TopicIdDoesNotExistException
         """
         ret = False
 
@@ -480,10 +526,17 @@ class ChatMinuteHandler(MessageHandler):
 
     def _is_valid_update_message(self, message):
         """
-            Returns True if message should be persisted, returns False otherwise.
-
             The only update message we are looking for is the one that ends the
             last topic in the chat.
+
+            Args:
+                message: deserialized Thrift Message
+
+            Returns:
+                True if message should be persisted, False otherwise.
+
+            Throws:
+                TopicIdDoesNotExistException
         """
         ret = False
         topic_id = message.minuteUpdateMessage.topicId
@@ -505,18 +558,18 @@ class ChatMarkerHandler(MessageHandler):
     """
         Handler for Chat Marker messages
 
-        This class creates model instances
-        from chat marker messages. Call finalize()
-        to return all created tag models after processing
-        all of a chat's messages.
+        This class creates/updates/deletes ChatSpeakingMarker model instances.
+        Each instance of this class should be used to process
+        all messages from a chat.  Call finalize() after processing
+        all messages to return all models to persist.
 
-        This class is responsible for
+        This class is also responsible for
         defining and applying the business rules to handle
         duplicate messages and filtering unwanted messages.
         """
 
     SPEAKING_DURATION_THRESHOLD = 0 # Persist all speaking markers
-    #TODO Jeff wanted to detect if the current speaking marker gets too large
+    #TODO Detect if the current speaking marker gets too large
 
 
     def __init__(self, chat_message_handler):
@@ -538,11 +591,9 @@ class ChatMarkerHandler(MessageHandler):
             Hook to allow any operations to be completed
             after all chat messages have been consumed.
 
-            Some handlers may only return models to be persisted when
-            this method is called due to the requirement to de-duplicate
-            data or perform other operations which require the handler
-            to have all chat messages before determining which models
-            to persist.
+            This method is also responsible for returning
+            all models to persist. It should be called
+            after processing all messages in a chat.
 
             Returns:
                 List of models to persist.
@@ -560,26 +611,31 @@ class ChatMarkerHandler(MessageHandler):
 
     def create_models(self, message):
         """
-            Create model instance
+            Create model instance(s) from input message.
+            Need to call finalize() after processing
+            all the message in a chat to get the created
+            instances.
 
-            Returns None if creation failed.
-            Creation can fail if the input message fails to pass biz rules filter.
+            Args:
+                message: Deserialized Thrift Message
 
-            The general approach for handling speaking markers is to
-            listen for a speaking-start marker and then wait for
-            the corresponding speaking-end.  All other duplicate speaking-start
-            markers for the specified user will be ignored until the
-            corresponding speaking-end message is received.  The reason
-            this is done because in a chat with 3 users, the two users
-            who are not speaking will generate duplicate speaking marker messages.
-
-            Models are created when the end-speaking marker is received.
+            Throws:
+                NoActiveChatMinuteException
         """
         created_model = None
 
         if self._is_valid_message(message):
 
             # Only expecting & handling speaking markers
+
+            # The general approach for handling speaking markers is to
+            # listen for a speaking-start marker and then wait for
+            # the corresponding speaking-end.  All other duplicate speaking-start
+            # markers for the specified user will be ignored until the
+            # corresponding speaking-end message is received.  The reason
+            # this is done because in a chat with 3 users, the two users
+            # who are not speaking will generate duplicate speaking marker messages.
+            # Models are created when the end-speaking marker is received.
 
             # Get user's speaking state
             user_id = message.markerCreateMessage.marker.speakingMarker.userId
@@ -603,10 +659,11 @@ class ChatMarkerHandler(MessageHandler):
                 # msg indicates user stopped speaking
                 if user_speaking_data.is_speaking():
                     # If user was already speaking, process msg.
-                    # Ignore duplicate speaking_end markers.
+                    # Ignore duplicate speaking_end markers. Once the first speaking end
+                    # message is processed, we will ignore the rest until we receive a speaking
+                    # start message.
                     user_speaking_data.set_end_timestamp(message.header.timestamp)
 
-                    # Only persist speaking markers with significant duration
                     duration = user_speaking_data.calculate_speaking_duration()
                     if duration > self.SPEAKING_DURATION_THRESHOLD:
                         chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
@@ -626,7 +683,7 @@ class ChatMarkerHandler(MessageHandler):
             # Update state
             self.speaking_state[user_id] = user_speaking_data
 
-        # Store message and its data for easy reference
+        # Store message and its associated model
         marker_data = MessageModelData(message.markerCreateMessage.markerId, message, created_model)
         self.all_markers[marker_data.id] = marker_data
 
@@ -668,10 +725,10 @@ class ChatTagHandler(MessageHandler):
     """
         Handler for Chat Tag messages
 
-        This class creates model instances
-        from chat minute messages. Call finalize()
-        to return all created tag models after processing
-        all of a chat's messages.
+        This class creates/updates/deletes ChatTag model instances.
+        Each instance should be used to process messages from
+        a chat.  Call finalize() after processing all messages
+        to return all created tag models.
 
         This class is responsible for
         defining and applying the business rules to handle
@@ -685,7 +742,7 @@ class ChatTagHandler(MessageHandler):
 
         # Create nested dict to ensure only unique tags are persisted.
         # Tags are considered unique across (user, minute, tag-name)
-        # The tagID is needed here to perform lookups if a tag is deleted.
+        # The tagID is needed here to perform lookups when tags are deleted.
         # {chat_minute : { tagId : userID+tagName
         #                  tagId: userID+tagName}
         self.tags_to_persist = {}
@@ -736,11 +793,9 @@ class ChatTagHandler(MessageHandler):
             Hook to allow any operations to be completed
             after all chat messages have been consumed.
 
-            Some handlers may only return models to be persisted when
-            this method is called due to the requirement to de-duplicate
-            data or perform other operations which require the handler
-            to have all chat messages before determining which models
-            to persist.
+            This method is also responsible for returning
+            all models to persist. It should be called
+            after processing all messages in a chat.
 
             Returns:
                 List of models to persist.
@@ -760,8 +815,9 @@ class ChatTagHandler(MessageHandler):
 
     def create_models(self, message):
         """
-            Create model instance(s).
-            Need to call finalize() to get the created
+            Create model instance(s) from input message.
+            Need to call finalize() after processing
+            all the message in a chat to get the created
             instances.
 
             Args:
@@ -773,7 +829,6 @@ class ChatTagHandler(MessageHandler):
         """
         created_model = None
 
-        # Create the model from the message
         if self._is_valid_create_tag_message(message):
             chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
             created_model = ChatTag(
@@ -784,18 +839,16 @@ class ChatTagHandler(MessageHandler):
                 deleted=False)
             self._update_tags_to_persist(chat_minute, message)
 
-        # Store message and its data for tagID look-ups on tag delete messages.
+        # Store message and its associated model for tagID look-ups on tag delete messages.
         tag_data = MessageModelData(message.tagCreateMessage.tagId, message, created_model)
         self.all_tags[tag_data.id] = tag_data
-
-        return
 
     def update_models(self, message):
         raise NotImplementedError
 
     def delete_models(self, message):
         """
-            Delete model instance(s).
+            Delete model instance(s) based upon input message.
 
             Args:
                 message: Deserialized Thrift Message
@@ -805,7 +858,7 @@ class ChatTagHandler(MessageHandler):
         """
         deleted_model = None
 
-        # Update model
+        # Mark the referenced ChatTag model as deleted
         tag_id = message.tagDeleteMessage.tagId
         if self._is_valid_delete_tag_message(message):
             tag_model = self.all_tags[tag_id].get_model()
@@ -848,7 +901,7 @@ class ChatTagHandler(MessageHandler):
         if tag_id in self.all_tags:
             raise DuplicateTagIdException(tag_id)
 
-        # If there is no active ChatMinute then reject this message
+        # Ensure there's an active chat minute
         chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
         if chat_minute is None:
             raise NoActiveChatMinuteException()
@@ -876,11 +929,12 @@ class ChatTagHandler(MessageHandler):
         """
         ret = False
 
-        # If there is no active ChatMinute then reject this message
+        # Ensure there is an active chat minute
         chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
         if chat_minute is None:
             raise NoActiveChatMinuteException()
 
+        # Check that we have a reference to the tagId marked to be deleted
         tag_id = message.tagDeleteMessage.tagId
         if tag_id not in self.all_tags:
             raise TagIdDoesNotExistException(tag_id)
@@ -903,7 +957,7 @@ class ChatTagHandler(MessageHandler):
 class MessageModelData(object):
     """
         Data structure to maintain references to a chat message's
-        associated message and model.
+        associated model.
     """
     def __init__(self, id, message, model=None):
         self.id = id
@@ -925,6 +979,9 @@ class MessageModelData(object):
 class SpeakingData(object):
     """
         Data structure to store chat speaking state.
+
+        Each participant in a chat will have an associated
+        instance of this class.
     """
     def __init__(self, user_id, is_speaking=False, start_timestamp=None, end_timestamp=None):
         self.user_id = user_id
