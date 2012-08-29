@@ -19,7 +19,7 @@ from trsvcscore.service.default import DefaultService
 from trsvcscore.service.server.default import ThriftServer
 from trpersistsvc.gen import TPersistService
 
-from handler import PersistServiceHandler
+from service_handler import PersistServiceHandler
 
 
 
