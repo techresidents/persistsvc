@@ -23,8 +23,8 @@ class PersistServiceHandler(TPersistService.Iface, ServiceHandler):
 
         self.log = logging.getLogger("%s.%s" % (__name__, PersistServiceHandler.__name__))
 
-        #create chat persist monitor which scans for new jobs
-        # to process and delegates the real work to persist data
+        # Create chat persist monitor which scans for new jobs
+        # to process and delegates the real work to persist data.
         self.persist_job_monitor = ChatPersistJobMonitor(
                 settings.PERSISTER_THREADS,
                 self.get_database_session,
@@ -45,7 +45,3 @@ class PersistServiceHandler(TPersistService.Iface, ServiceHandler):
         """Join handler."""
         join([self.persist_job_monitor, super(PersistServiceHandler, self)], timeout)
 
-    def reinitialize(self, requestContext):
-        """Reinitialize - nothing to do."""
-        #TODO - anything to do here?
-        pass

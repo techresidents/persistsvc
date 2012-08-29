@@ -23,8 +23,10 @@ class NoActiveChatMinuteException(Exception):
     pass
 
 class TagIdDoesNotExistException(Exception):
+    """ Tag Id Does Not Exist Exception class"""
     pass
 
 class TopicIdDoesNotExistException(Exception):
+    """ Topic Id Does Not Exist Exception class"""
     pass
 

@@ -1,13 +1,11 @@
-import datetime
+
 import logging
 import threading
 import time
 
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql import func
 
 from trchatsvc.gen.ttypes import Message
-from trpycore.alg.grouping import group
 from trpycore.thrift.serialization import deserialize
 from trpycore.timezone import tz
 from trpycore.thread.util import join
@@ -242,6 +240,7 @@ class ChatPersisterThreadPool(ThreadPool):
 
         persister = ChatPersister(self.db_session_factory, job_id)
         persister.persist()
+
 
 class ChatPersistJobMonitor(object):
     """
