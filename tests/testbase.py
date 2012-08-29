@@ -21,7 +21,7 @@ from trpersistsvc.gen import TPersistService
 from service_handler import PersistServiceHandler
 
 
-class PersistService(DefaultService):
+class PersistTestService(DefaultService):
     def __init__(self, hostname, port):
 
         self.handler = PersistServiceHandler(self)
@@ -34,7 +34,7 @@ class PersistService(DefaultService):
             processor=TPersistService.Processor(self.handler),
             threads=1)
 
-        super(PersistService, self).__init__(
+        super(PersistTestService, self).__init__(
             name=SERVICE_NAME,
             version="unittest-version",
             build="unittest-build",
@@ -52,7 +52,7 @@ class IntegrationTestCase(unittest.TestCase):
 
         logging.basicConfig(level=logging.DEBUG)
 
-        cls.service = PersistService("localhost", 9093)
+        cls.service = PersistTestService("localhost", 9093)
         cls.service.start()
         time.sleep(1)
 
@@ -73,3 +73,37 @@ class IntegrationTestCase(unittest.TestCase):
         cls.service.stop()
         cls.service.join()
 
+
+class DistributedTestCase(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        logging.basicConfig(level=logging.DEBUG)
+
+        cls.service = PersistTestService("localhost", 9093)
+        cls.service.start()
+        time.sleep(1)
+
+        cls.service2 = PersistTestService("localhost", 9094)
+        cls.service2.start()
+        time.sleep(1)
+
+        cls.service_name = SERVICE_NAME
+        cls.service_class = TPersistService
+
+        cls.zookeeper_client = ZookeeperClient(["localdev:2181"])
+        cls.zookeeper_client.start()
+        time.sleep(1)
+
+        cls.service_proxy = ZookeeperServiceProxy(cls.zookeeper_client, cls.service_name, cls.service_class, keepalive=True)
+        cls.request_context = RequestContext(userId=0, impersonatingUserId=0, sessionId="dummy_session_id", context="")
+
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.zookeeper_client.stop()
+        cls.zookeeper_client.join()
+        cls.service.stop()
+        cls.service.join()
+        cls.service2.stop()
+        cls.service2.join()

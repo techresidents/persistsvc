@@ -1,12 +1,16 @@
+
 import unittest
-import logging
 import time
 
-from testbase import IntegrationTestCase
+from testbase import DistributedTestCase, IntegrationTestCase
 
-class PersisterTest(IntegrationTestCase):
+
+
+
+
+class ChatPersisterTest(IntegrationTestCase):
     """
-        Test the persist service's Persister object which responsible for
+        Test the persist service's ChatPersister object which responsible for
         starting, processing, and ending a persist job.
     """
 
@@ -20,6 +24,8 @@ class PersisterTest(IntegrationTestCase):
     @classmethod
     def tearDownClass(cls):
         IntegrationTestCase.tearDownClass()
+
+
 
     def test_startJob(self):
         # Verify the correct job fields have been updated to claim ownership of this job

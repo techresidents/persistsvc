@@ -25,6 +25,9 @@ from persistsvc_exceptions import DuplicateTagIdException, NoActiveChatMinuteExc
 from testbase import IntegrationTestCase
 from topic_test_data import TopicTestDataSets
 
+
+
+
 class ChatTagHandlerTest(IntegrationTestCase):
     """
         Test the ChatTagHandler class
