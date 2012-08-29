@@ -1,56 +1,63 @@
-import unittest
+
 import logging
-import time
+import os
+import sys
+import unittest
 
-from trpycore.zookeeper.client import ZookeeperClient
-from trsvcscore.proxy.zoo import ZookeeperServiceProxy
-from tridlcore.gen.ttypes import RequestContext
-from trpersistsvc.gen import TPersistService
 
-class MessageHandlerTest(unittest.TestCase):
+SERVICE_NAME = "persistsvc"
+#Add SERVICE_ROOT to python path, for imports.
+SERVICE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "../", SERVICE_NAME))
+sys.path.insert(0, SERVICE_ROOT)
+
+
+from chat_test_data import ChatTestDataSets
+from message_handler import ChatMessageHandler
+from testbase import IntegrationTestCase
+from topic_test_data import TopicTestDataSets
+
+
+
+
+
+class ChatMessageHandlerTest(unittest.TestCase):
     """
         Test the persist service's chat message handler.
     """
 
     @classmethod
     def setUpClass(cls):
-        cls.service_name = "persistsvc"
-        cls.service_class = TPersistService
+        #IntegrationTestCase.setUpClass()
+        #cls.db_session = cls.service.handler.get_database_session()
 
-        cls.zookeeper_client = ZookeeperClient(["localdev:2181"])
-        cls.zookeeper_client.start()
-        time.sleep(1)
+        # Get topic data
+        topic_data = TopicTestDataSets()
+        cls.test_topic_datasets = topic_data.get_list()
 
-        cls.service = ZookeeperServiceProxy(cls.zookeeper_client, cls.service_name, cls.service_class, keepalive=True)
-        cls.request_context = RequestContext(userId=0, impersonatingUserId=0, sessionId="dummy_session_id", context="")
+        # Get chat data
+        chat_data = ChatTestDataSets()
+        cls.test_chat_datasets = chat_data.get_list()
 
-        logging.basicConfig(level=logging.DEBUG)
-
-        # Instantiate MessageHandler
-        # dbSession =
-        # msg_handler = MessageHandler(dbSession)
 
     @classmethod
     def tearDownClass(cls):
-        cls.zookeeper_client.stop()
-        cls.zookeeper_client.join()
-
-
-    def test_minuteCreateMessage(self):
-        # Create ChatMessage using SQLAlchemy
-        # Pass in to process
-        # Verify type of object returned
-        # Verify data
-        # Verify biz rules depending upon input data
-        # Will probably need a ChatMessage builder class to encode
+        #IntegrationTestCase.setUpClass()
         pass
 
-    def test_activeMinute(self):
-        pass
 
-    def test_persistChat(self):
-        # test end to end
-        pass
+
+    def test_ChatMessageHandlerInit(self):
+
+        # Specify a chat
+        chat_data = self.test_chat_datasets[0]
+
+        # Instantiate MessageHandler
+        handler = ChatMessageHandler(chat_data.chat_session_id, chat_data.topic_collection)
+        self.assertIsNotNone(handler.chat_marker_handler)
+        self.assertIsNotNone(handler.chat_minute_handler)
+        self.assertIsNotNone(handler.chat_tag_handler)
+
+
 
 
 

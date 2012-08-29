@@ -114,6 +114,7 @@ class ChatMessageHandler(object):
             1) Filtering out messages that don't need to be persisted
             2) Creating model instances from chat messages
     """
+
     def __init__(self, chat_session_id, topics_collection):
         self.log = logging.getLogger(__name__)
         self.chat_session_id = chat_session_id
@@ -189,7 +190,6 @@ class ChatMessageHandler(object):
             self.log.warning('Attempted to access tag that does not exist with tagID=%s', e.id)
         except DuplicateTagIdException as e:
             self.log.warning('Attempted to create tag with duplicate tagID=%s' % e.id)
-
 
 class ChatMinuteHandler(MessageHandler):
     """
