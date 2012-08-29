@@ -5,7 +5,9 @@ from trsvcscore.service.handler.service import ServiceHandler
 from trpersistsvc.gen import TPersistService
 
 import settings
-from persister import ChatPersistJobMonitor
+from chat_persist_job_monitor import ChatPersistJobMonitor
+
+
 
 class PersistServiceHandler(TPersistService.Iface, ServiceHandler):
     """
