@@ -128,7 +128,6 @@ class ChatPersister(object):
         Abort the current persist job. Reset the 'start' column and
         'owner' column to NULL.
         """
-        # TODO: Monitor thread is stopping after abort is called.
 
         self.log.error("Aborting chat persist job with job_id=%d ..." % self.job_id)
 
