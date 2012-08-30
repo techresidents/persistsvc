@@ -779,7 +779,8 @@ class ChatTagHandler(MessageHandler):
         This class creates/updates/deletes ChatTag model instances.
         Each instance should be used to process messages from
         a chat.  Call finalize() after processing all messages
-        to return all created tag models.
+        to return all created tag models. Deleted tags are not
+        returned.
 
         This class is responsible for
         defining and applying the business rules to handle
@@ -914,6 +915,9 @@ class ChatTagHandler(MessageHandler):
         tag_id = message.tagDeleteMessage.tagId
         if self._is_valid_delete_tag_message(message):
             tag_model = self.all_tags[tag_id].get_model()
+            # Set chat minute ref to None so that the Chat_Minute
+            # back-reference to ChatTag doesn't create it automagically.
+            tag_model.chat_minute = None
             tag_model.deleted = True
             deleted_model = tag_model
             self._update_tags_to_persist(

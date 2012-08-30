@@ -177,9 +177,9 @@ class DistributedPersistServiceTest(DistributedTestCase):
         # Services poll at 60 second intervals.
         # Sleep 90 secs to ensure that the unprocessed jobs written
         # during setup() will have been processed.
-        time.sleep(70) #TODO reference settings poll time
+        time.sleep(80) #TODO reference settings poll time
 
-        # Read back data written to db.
+        # TODO Read back data written to db.
         pass
 
 

@@ -72,8 +72,11 @@ class ChatTagHandlerTest(IntegrationTestCase):
         # Retrieve all chat tag models
         tag_models = message_handler.chat_tag_handler.finalize()
 
-        # Compare output to expected values
+        # Compare number of tags created to expected number
         expected_tag_models = chat_data.expected_tag_models
+        self.assertEqual(len(expected_tag_models), len(tag_models))
+
+        # Compare output to expected values
         for (index, actual_tag) in enumerate(tag_models):
             # index values start at 0
             self.assertEqual(expected_tag_models[index].user_id, actual_tag.user_id)

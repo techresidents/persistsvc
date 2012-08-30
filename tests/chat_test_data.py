@@ -180,6 +180,8 @@ class ChatTestDataBuilder(object):
             ret = message_type_dict['WHITEBOARD_CREATE_PATH']
         elif message.whiteboardDeletePathMessage is not None:
             ret = message_type_dict['WHITEBOARD_DELETE_PATH']
+        else:
+            raise Exception("Can't retrieve message type ID for unknown message type")
 
         return ret
 
