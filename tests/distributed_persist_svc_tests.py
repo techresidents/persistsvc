@@ -34,15 +34,6 @@ class DistributedPersistServiceTest(DistributedTestCase):
         DistributedTestCase.setUpClass()
 
 
-        chat_datasets = ChatTestDataSets()
-        chat_data_list = chat_datasets.get_list()
-        chat_data = chat_data_list[0]
-        print '*****************************'
-        print chat_data.chat_session_token # TODO why a tuple?
-        print '*****************************'
-
-
-
         # Need to create the data objs that persist job requires
         #   1) Need to write ChatPersistJobs
         #   2) Need to write ChatMessages

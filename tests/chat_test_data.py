@@ -211,7 +211,7 @@ class ChatTestDataSets(object):
         #
         chat_session_id = 3200 # Random ID
         message_list = self.get_chat1_msgs()
-        chat_session_token = message_list[0].header.chatSessionToken #TODO fix this
+        chat_session_token = message_list[0].header.chatSessionToken
         topic_collection = test_topic_datasets[4].topic_collection  # Get the topic collection that matches the captured chat messages
         expected_minute_models = self.get_chat1_expected_minute_models(chat_session_id)
         expected_marker_models = self.get_chat1_expected_marker_models(expected_minute_models)
@@ -257,6 +257,7 @@ class ChatTestDataSets(object):
         )
 
         self.test_chat_data_sets = [dataset1, dataset2]
+
 
 
     def get_list(self):
@@ -462,7 +463,7 @@ class ChatTestData(object):
                  expected_tag_models
     ):
         self.chat_session_id = chat_session_id
-        self.chat_session_token = chat_session_token,
+        self.chat_session_token = chat_session_token
         self.message_list = deserialized_message_list # msgs in chronological order
         self.serialized_message_list = serialized_message_list # msgs in chronological order
         self.topic_collection = topic_collection
