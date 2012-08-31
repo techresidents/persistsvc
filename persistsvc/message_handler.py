@@ -205,6 +205,25 @@ class ChatMinuteHandler(MessageHandler):
         duplicate messages and filtering any unwanted messages.
 
         This class also maintains the active chat minute state.
+
+        How Messages Are Processed:
+            The initial design of this class processed minute-create
+            and minute-update message in chronological order for
+            both parent topics and leaf topics.  The problem
+            with this approach was that the order of the
+            received messages could not be guaranteed due to the
+            very small difference in time between messages.
+
+            The new approach is to only process minute-create
+            messages that are generated on leaf-topics.  From
+            this message we create minute-create data for all
+            parent topics that need it, and close out the previous
+            active chat minute.  Naturally, this approach fails
+            when the last topic in the chat is reached; for the
+            last topic we process a minute-update message and
+            close any parent topics that need closing.  Incoming
+            messages are assumed to be in chronological order.
+
         """
     DEFAULT_MINUTE_START_TIME = 0
 
@@ -581,6 +600,13 @@ class ChatMarkerHandler(MessageHandler):
         This class is also responsible for
         defining and applying the business rules to handle
         duplicate messages and filtering unwanted messages.
+
+        How Messages Are Processed:
+            At the moment, all speaking messages that are received
+            prior to the 'start' message are ignored.  After
+            the Start message is received only speaking markers
+            are captured to be persisted.  All speaking markers,
+            regardless of duration, are currently persisted.
         """
 
     SPEAKING_DURATION_THRESHOLD = 0 # Persist all speaking markers
@@ -779,12 +805,17 @@ class ChatTagHandler(MessageHandler):
         This class creates/updates/deletes ChatTag model instances.
         Each instance should be used to process messages from
         a chat.  Call finalize() after processing all messages
-        to return all created tag models. Deleted tags are not
-        returned.
+        to return all created tag models.
 
         This class is responsible for
         defining and applying the business rules to handle
         duplicate messages and filtering any unwanted messages.
+
+        How Messages Are Processed
+            At present, deleted tags are not returned. Additionally,
+            only tags that are unique across (user, minute, tag-name)
+            will be returned.
+
         """
 
     def __init__(self, chat_message_handler):
@@ -915,8 +946,14 @@ class ChatTagHandler(MessageHandler):
         tag_id = message.tagDeleteMessage.tagId
         if self._is_valid_delete_tag_message(message):
             tag_model = self.all_tags[tag_id].get_model()
-            # Set chat minute ref to None so that the Chat_Minute
+            # IMPORTANT: Set chat minute ref to None so that the Chat_Minute
             # back-reference to ChatTag doesn't create it automagically.
+            #
+            # If the back-reference creates deleted tags for us we could potentially
+            # run into a database error if a user were to create a tag, delete it,
+            # and then create the same tag and delete it again, This tag
+            # would be created twice by SQLAlchemy which would violate the
+            # ChatTag table's unique constraint.
             tag_model.chat_minute = None
             tag_model.deleted = True
             deleted_model = tag_model
