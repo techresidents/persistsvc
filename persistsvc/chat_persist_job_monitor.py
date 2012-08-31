@@ -7,8 +7,6 @@ from trpycore.thread.util import join
 from trpycore.thread.threadpool import ThreadPool
 from trsvcscore.db.models import ChatPersistJob
 
-from cache import ChatMessageCache
-from mapper import ChatMessageMapper
 from persister import ChatPersister
 
 
