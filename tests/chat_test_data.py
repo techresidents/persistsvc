@@ -27,18 +27,43 @@ from topic_test_data import TopicTestDataSets
 class ChatTestDataBuilder(object):
     """
         Class to generate chat data for testing.
-        Assumes the following chat topic hierarchy:
+        All generated data has the following chat topic hierarchy:
             - Root
             --- Topic1
+        All generated data assumes one user in the chat.
+
+        This class was created to facilitate tests that require
+        writing ChatMessages and ChatPersistJobs to the database.
+        The data in the ChatTestDataSets class has hard coded
+        database IDs for things like Topics, Users, and ChatSessions
+        which means it couldn't be used to actually write the data
+        to the database. These values are parameterized in this class.
     """
 
     def __init__(self):
-        # Get the topic collection that matches this topic hierarchy
+
+        # Get the topic collection that matches a topic hierarchy of
+        # Root
+        #    Topic1
+        #
         topic_data = TopicTestDataSets().get_list()
         self.topic_collection = topic_data[4].topic_collection
 
 
     def build(self, root_topic_id, topic1_id, chat_session_id, chat_session_token, user_id):
+        """
+            Generate chat data
+
+            Args:
+                root_topic_id: The root topic's database ID
+                topic1_id: Topic1's database ID
+                chat_session_id: The database ID of the ChatSession the generated chat should use
+                chat_session_token: The chat session token the generated chat should use
+                user_id: The user ID the generated chat should use
+
+            Returns:
+                Returns a ChatTestData object
+        """
 
         deserialized_message_list = self.get_deserialized_messages(root_topic_id, topic1_id, chat_session_token, user_id)
         serialized_message_list = self.get_serialized_messages(deserialized_message_list, chat_session_id)
@@ -59,7 +84,14 @@ class ChatTestDataBuilder(object):
 
     def get_deserialized_messages(self, root_topic_id, topic1_id, chat_session_token, user_id):
         """
-            Return list of deserialized Thrift Messages
+            Args:
+                root_topic_id: The root topic's database ID
+                topic1_id: Topic1's database ID
+                chat_session_token: The chat session token the generated messages should use
+                user_id: The user ID the generated chat should use
+
+            Returns:
+                Return list of deserialized Thrift Messages
         """
 
         m0 = Message(tagCreateMessage=None, minuteUpdateMessage=None, whiteboardDeletePathMessage=None, minuteCreateMessage=None, header=MessageHeader(chatSessionToken=chat_session_token, timestamp=1345643917.544588, route=MessageRoute(type=0, recipients=[]), userId=user_id, type=400, id='b64efda139224cdc9e8b2248fdf49117'), tagDeleteMessage=None, whiteboardCreateMessage=None, whiteboardDeleteMessage=None, markerCreateMessage=MarkerCreateMessage(marker=Marker(publishingMarker=None, speakingMarker=None, connectedMarker=None, endedMarker=None, joinedMarker=JoinedMarker(userId=user_id, name='brian'), startedMarker=None, type=0), markerId='68819105102c4fdd8dffcce983d34f76'), whiteboardCreatePathMessage=None)
@@ -84,6 +116,14 @@ class ChatTestDataBuilder(object):
         return chat
 
     def get_serialized_messages(self, deserialized_msg_list, chat_session_id):
+        """
+            Args:
+                deserialized_msg_list: list of deserialized Thrift Message objects
+                chat_session_id: The database ID of the ChatSession the generated chat should use
+
+            Returns:
+                Return a list of ChatMessages
+        """
         serialized_messages = []
 
         for deserialized_msg in deserialized_msg_list:
@@ -104,6 +144,15 @@ class ChatTestDataBuilder(object):
         return serialized_messages
 
     def get_expected_minute_models(self, root_topic_id, topic1_id, chat_session_id):
+        """
+            Args:
+                root_topic_id: The root topic's database ID
+                topic1_id: Topic1's database ID
+                chat_session_id: The database ID of the ChatSession the generated chat should use
+
+            Returns:
+                Returns list of ChatMinute models the PersistService should create
+        """
 
         # Chat1 parent topic minute
         parent_chat_minute = ChatMinute(
@@ -124,10 +173,26 @@ class ChatTestDataBuilder(object):
         return [parent_chat_minute, leaf_chat_minute]
 
     def get_expected_marker_models(self, user_id, expected_chat_minute_list):
+        """
+            Args:
+                user_id: The user ID the generated chat used
+                expected_chat_minute_list: The list of expected ChatMinute models
+
+            Returns:
+                Returns list of ChatSpeakingMarker models the PersistService should create
+        """
         # No Chat Speaking Marker Models in this chat
         return []
 
     def get_expected_tag_models(self, deserialized_message_list, expected_chat_minute_list):
+        """
+            Args:
+                deserialized_msg_list: The list of deserialized Thrift Messages the generated chat used
+                expected_chat_minute_list: The list of expected ChatMinute models
+
+            Returns:
+                Returns list of ChatTag models the PersistService should create
+        """
 
         expected_tag_models = []
 
@@ -144,6 +209,7 @@ class ChatTestDataBuilder(object):
 
     def getMessageTypeID(self, message):
         """
+            Convenience function to determine a message's type.
             Args:
                 message: deserialized Thrift Message
             Returns:
@@ -191,6 +257,9 @@ class ChatTestDataBuilder(object):
 
 class ChatTestDataSets(object):
     """
+        Convenience class to keep all created
+        chat data in one place.
+
         This test data is meant to be used for
         in-memory tests.  It contains hard coded
         topic IDs and user IDs which will cause
@@ -453,6 +522,9 @@ class ChatTestDataSets(object):
 
 
 class ChatTestData(object):
+    """
+        Data structure to house chat data.
+    """
 
     def __init__(self,
                  chat_session_id,

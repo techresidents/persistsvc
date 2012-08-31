@@ -8,6 +8,12 @@ from topic_data_manager import TopicDataCollection, TopicData
 
 
 class TopicTestDataSets(object):
+    """
+        Convenience class to keep all Topic test data in one place.
+        This class generates numerous Topic data sets during
+        construction and makes them available via the getList()
+        method.
+    """
 
     def __init__(self):
 
@@ -240,6 +246,9 @@ class TopicTestDataSets(object):
 
 
 class TopicTestData(object):
+    """
+        Data structure to house Topic data.
+    """
 
     def __init__(self, topic_list, leaf_list, highest_leaf_list, chat_minute_end_topic_chain, topic_dict, topic_collection):
         self.expected_topic_list_by_rank = topic_list

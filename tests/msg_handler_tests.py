@@ -1,5 +1,4 @@
 
-import logging
 import os
 import sys
 import unittest
@@ -13,7 +12,6 @@ sys.path.insert(0, SERVICE_ROOT)
 
 from chat_test_data import ChatTestDataSets
 from message_handler import ChatMessageHandler
-from testbase import IntegrationTestCase
 from topic_test_data import TopicTestDataSets
 
 

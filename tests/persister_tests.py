@@ -5,7 +5,7 @@ import time
 from testbase import DistributedTestCase, IntegrationTestCase
 
 
-
+# TODO Add tests
 
 
 class ChatPersisterTest(IntegrationTestCase):
