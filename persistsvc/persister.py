@@ -8,8 +8,6 @@ from trpycore.thrift.serialization import deserialize
 from trpycore.timezone import tz
 from trsvcscore.db.models import ChatPersistJob, ChatMessage, ChatMessageFormatType
 
-from cache import ChatMessageCache
-from mapper import ChatMessageMapper
 from message_handler import ChatMessageHandler
 from persistsvc_exceptions import DuplicatePersistJobException
 from topic_data_manager import TopicDataManager
