@@ -16,10 +16,10 @@ from trpycore.timezone import tz
 from trsvcscore.db.models import Chat, ChatPersistJob, ChatSession, ChatMessage, ChatMinute, ChatSpeakingMarker, ChatTag, \
     Topic
 
-from chat_test_data import ChatTestDataBuilder, ChatTestDataSets
+from chat_test_data import ChatTestDataBuilder
 from testbase import DistributedTestCase
 
-
+import settings
 
 
 
@@ -72,7 +72,8 @@ class DistributedPersistServiceTest(DistributedTestCase):
 
 
 
-        # Can have as many chat_sessions and jobs as I want
+        # Can have as many chat_sessions and jobs as needed
+        # Just doing 1 session and 1 persist job for now.
         cls.chat_session_token = 'test1_dummy_token'
 
 
@@ -99,7 +100,7 @@ class DistributedPersistServiceTest(DistributedTestCase):
             # Note the commit() above is required since we need
             # real IDs to build and persist ChatMessages.
             builder = ChatTestDataBuilder()
-            chat_data = builder.build(
+            cls.chat_data = builder.build(
                 root_topic_id=cls.root_topic.id,
                 topic1_id=cls.topic1.id,
                 chat_session_id=cls.chat_session.id,
@@ -108,7 +109,7 @@ class DistributedPersistServiceTest(DistributedTestCase):
             )
 
             # Write ChatMessages to the db for consumption by the persist svc
-            cls.chat_messages = chat_data.serialized_message_list
+            cls.chat_messages = cls.chat_data.serialized_message_list
             for chat_message in cls.chat_messages:
                 db_session.add(chat_message)
             db_session.commit()
@@ -175,12 +176,98 @@ class DistributedPersistServiceTest(DistributedTestCase):
 
         # Setup() will have started two instances of the persist service.
         # Services poll at 60 second intervals.
-        # Sleep 90 secs to ensure that the unprocessed jobs written
+        # Sleep poll+30 secs to ensure that the unprocessed jobs written
         # during setup() will have been processed.
-        time.sleep(80) #TODO reference settings poll time
+        time.sleep(settings.PERSISTER_POLL_SECONDS + 30)
 
-        # TODO Read back data written to db.
-        pass
+        # Read and verify the data that the persist job
+        # added to the db.
+        chat_minutes = []
+        chat_tags = []
+        chat_speaking_markers = []
+
+        try:
+            # Retrieve all created ChatMinutes, ChatTags,
+            # and ChatSpeakingMarkers
+            db_session = self.service.handler.get_database_session()
+
+            chat_session = db_session.query(ChatSession).\
+                filter_by(token=self.chat_session_token).\
+                one()
+
+            minutes = db_session.query(ChatMinute).\
+                filter_by(chat_session_id=chat_session.id).\
+                all()
+            chat_minutes.extend(minutes)
+
+            for minute in chat_minutes:
+
+                tags = db_session.query(ChatTag).\
+                    filter_by(chat_minute_id=minute.id).\
+                    all()
+                chat_tags.extend(tags)
+
+                markers = db_session.query(ChatSpeakingMarker).\
+                    filter_by(chat_minute_id=minute.id).\
+                    all()
+                chat_speaking_markers.extend(markers)
+
+
+
+            # Compare number of tags created to expected number
+            expected_chat_tags = self.chat_data.expected_tag_models
+            self.assertEqual(len(expected_chat_tags), len(chat_tags))
+
+            # Compare output to expected values
+            for index, actual_tag in enumerate(chat_tags):
+                # index values start at 0
+                self.assertEqual(expected_chat_tags[index].user_id, actual_tag.user_id)
+                self.assertEqual(expected_chat_tags[index].tag_id, actual_tag.tag_id)
+                self.assertEqual(expected_chat_tags[index].name, actual_tag.name)
+                self.assertEqual(expected_chat_tags[index].deleted, actual_tag.deleted)
+                self.assertEqual(expected_chat_tags[index].chat_minute.chat_session_id, actual_tag.chat_minute.chat_session_id)
+                self.assertEqual(expected_chat_tags[index].chat_minute.topic_id, actual_tag.chat_minute.topic_id)
+                self.assertEqual(expected_chat_tags[index].chat_minute.start, actual_tag.chat_minute.start)
+                self.assertEqual(expected_chat_tags[index].chat_minute.end, actual_tag.chat_minute.end)
+
+
+
+            # Compare number of minutes created to expected number
+            expected_chat_minutes = self.chat_data.expected_minute_models
+            self.assertEqual(len(expected_chat_minutes), len(chat_minutes))
+
+            # Compare output to expected values
+            for index, model in enumerate(chat_minutes):
+                self.assertEqual(expected_chat_minutes[index].chat_session_id, model.chat_session_id)
+                self.assertEqual(expected_chat_minutes[index].topic_id, model.topic_id)
+                self.assertEqual(expected_chat_minutes[index].start, model.start)
+                self.assertEqual(expected_chat_minutes[index].end, model.end)
+
+
+
+            # Compare number of markers created to expected number
+            expected_chat_markers = self.chat_data.expected_marker_models
+            self.assertEqual(len(expected_chat_markers), len(chat_speaking_markers))
+
+            # Compare output to expected values
+            for index, model in enumerate(chat_speaking_markers):
+                self.assertIsNotNone(model.start)
+                self.assertIsNotNone(model.end)
+                self.assertEqual(expected_chat_markers[index].user_id, model.user_id)
+                self.assertEqual(expected_chat_markers[index].chat_minute.chat_session_id, model.chat_minute.chat_session_id)
+                self.assertEqual(expected_chat_markers[index].chat_minute.topic_id, model.chat_minute.topic_id)
+                self.assertEqual(expected_chat_markers[index].chat_minute.start, model.chat_minute.start)
+                self.assertEqual(expected_chat_markers[index].chat_minute.end, model.chat_minute.end)
+
+
+
+        except Exception as e:
+            logging.exception(e)
+        finally:
+            db_session.close()
+
+
+
 
 
 
