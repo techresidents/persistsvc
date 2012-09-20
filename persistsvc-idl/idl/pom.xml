@@ -8,7 +8,7 @@
     <parent>
         <groupId>com.techresidents.services.persistsvc</groupId>
         <artifactId>persistsvc-idl</artifactId>
-        <version>0.3-SNAPSHOT</version>
+        <version>0.3.0</version>
     </parent>
 
     <artifactId>persistsvc-idl-idl</artifactId>
