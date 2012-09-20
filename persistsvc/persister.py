@@ -6,7 +6,7 @@ from sqlalchemy.sql import func
 from trchatsvc.gen.ttypes import Message
 from trpycore.thrift.serialization import deserialize
 from trpycore.timezone import tz
-from trsvcscore.db.models import ChatPersistJob, ChatMessage, ChatMessageFormatType
+from trsvcscore.db.models import ChatPersistJob, ChatMessage, ChatMessageFormatType, ChatArchiveJob
 
 from message_handler import ChatMessageHandler
 from persistsvc_exceptions import DuplicatePersistJobException
@@ -49,9 +49,10 @@ class ChatPersister(object):
         try:
             self._start_chat_persist_job()
             self._persist_data()
+            self._create_chat_archive_job()
             self._end_chat_persist_job()
 
-        except DuplicatePersistJobException as warning:
+        except DuplicatePersistJobException:
             self.log.warning("Chat persist job with job_id=%d already claimed. Stopping processing." % self.job_id)
             # This means that the PersistJob was claimed just before
             # this thread claimed it. Stop processing the job. There's
@@ -59,6 +60,7 @@ class ChatPersister(object):
             # has occurred.
 
         except Exception as e:
+            self.log.exception(e)
             self._abort_chat_persist_job()
 
 
@@ -205,3 +207,20 @@ class ChatPersister(object):
             raise e
         finally:
             db_session.close()
+    
+    def _create_chat_archive_job(self):
+        try:
+            db_session = self.create_db_session()
+            job = ChatArchiveJob(
+                    chat_session_id=self.chat_session_id,
+                    created=func.current_timestamp(),
+                    not_before=func.current_timestamp(),
+                    retries_remaining=3)
+            db_session.add(job)
+            db_session.commit()
+        except Exception as e:
+            self.log.exception(e)
+            db_session.rollback()
+        finally:
+            if db_session:
+                db_session.close()
