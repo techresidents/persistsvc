@@ -1,4 +1,4 @@
-
+import datetime
 import logging
 
 from sqlalchemy.sql import func
@@ -211,10 +211,15 @@ class ChatPersister(object):
     def _create_chat_archive_job(self):
         try:
             db_session = self.create_db_session()
+
+            #wait 5 minutes before we start the archive job
+            #since it takes Tokbox time a few minutes.
+            not_before = func.current_timestamp() \
+                    + datetime.timedelta(minutes=5)
             job = ChatArchiveJob(
                     chat_session_id=self.chat_session_id,
                     created=func.current_timestamp(),
-                    not_before=func.current_timestamp(),
+                    not_before=not_before,
                     retries_remaining=3)
             db_session.add(job)
             db_session.commit()
