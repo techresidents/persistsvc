@@ -23,6 +23,14 @@ import settings
 
 
 
+
+#TODO This test class is not very robust. It relies
+#upon a fixed Topic structure.  Additionally, at
+#present no speaking markers are being tested.
+#The chat minute models that are created for testing
+#are also very simple. It will have to do for now.
+
+
 class DistributedPersistServiceTest(DistributedTestCase):
     """
         Run multiple instances of the PersistService simultaneously
@@ -197,18 +205,22 @@ class DistributedPersistServiceTest(DistributedTestCase):
 
             minutes = db_session.query(ChatMinute).\
                 filter_by(chat_session_id=chat_session.id).\
+                order_by(ChatMinute.start).\
                 all()
             chat_minutes.extend(minutes)
 
             for minute in chat_minutes:
 
+                #TODO ordering tags this way is not robust and relies upon an implementation detail
                 tags = db_session.query(ChatTag).\
                     filter_by(chat_minute_id=minute.id).\
+                    order_by(ChatTag.id).\
                     all()
                 chat_tags.extend(tags)
 
                 markers = db_session.query(ChatSpeakingMarker).\
                     filter_by(chat_minute_id=minute.id).\
+                    order_by(ChatSpeakingMarker.start).\
                     all()
                 chat_speaking_markers.extend(markers)
 

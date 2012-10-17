@@ -92,8 +92,8 @@ class ChatPersistJobMonitor(object):
                 # Look for ChatPersistJobs with no owner and no start time.
                 # This indicates a job which needs to be processed.
                 for job in session.query(ChatPersistJob).\
-                filter(ChatPersistJob.owner == None).\
-                filter(ChatPersistJob.start == None):
+                    filter(ChatPersistJob.owner == None).\
+                    filter(ChatPersistJob.start == None):
 
                     # delegate jobs to threadpool for processing
                     self.threadpool.put(job.id)
