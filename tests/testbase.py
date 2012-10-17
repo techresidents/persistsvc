@@ -84,7 +84,7 @@ class DistributedTestCase(unittest.TestCase):
         cls.service.start()
         time.sleep(1)
 
-        cls.service2 = PersistTestService("localhost", 9094)
+        cls.service2 = PersistTestService("localhost", 9194)
         cls.service2.start()
         time.sleep(1)
 

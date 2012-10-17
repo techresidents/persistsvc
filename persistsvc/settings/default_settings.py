@@ -24,7 +24,7 @@ DATABASE_CONNECTION = "postgresql+psycopg2://%s:%s@/%s?host=%s" % (DATABASE_USER
 ZOOKEEPER_HOSTS = ["localdev:2181"]
 
 #Persister settings
-PERSISTER_THREADS = 4
+PERSISTER_THREADS = 1
 PERSISTER_POLL_SECONDS = 60
 
 #Logging settings
