@@ -916,6 +916,7 @@ class ChatTagHandler(MessageHandler):
             chat_minute = self.chat_message_handler.chat_minute_handler.get_active_minute()
             created_model = ChatTag(
                 user_id=message.header.userId,
+                time = tz.timestamp_to_utc(message.header.timestamp),
                 chat_minute=chat_minute,
                 tag_id=message.tagCreateMessage.tagReferenceId,
                 name=message.tagCreateMessage.name,
