@@ -7,7 +7,7 @@ from persistsvc_exceptions import \
     NoActiveChatMinuteException, \
     TagIdDoesNotExistException, \
     TopicIdDoesNotExistException
-from trchatsvc.gen.ttypes import Message, MessageType, MarkerType
+from trchatsvc.gen.ttypes import MessageType, MarkerType
 from trsvcscore.db.models import ChatMinute, ChatSpeakingMarker,\
     ChatTag
 from trpycore.timezone import tz
@@ -314,7 +314,7 @@ class ChatMinuteHandler(MessageHandler):
             # All leafs guaranteed to have at least one previous topic
             current_topic = topics_collection.get_previous_topic(topic)
             current_closing_level = topic.level
-            while current_topic.level >= level_to_close:
+            while current_topic and current_topic.level >= level_to_close:
                 if current_topic not in leaf_list:
                     # We only want parents. No children allowed.
                     if current_topic.level < current_closing_level:
