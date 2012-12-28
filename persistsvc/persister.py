@@ -6,7 +6,9 @@ from sqlalchemy.sql import func
 from trchatsvc.gen.ttypes import Message
 from trpycore.thrift.serialization import deserialize
 from trpycore.timezone import tz
-from trsvcscore.db.models import ChatPersistJob, ChatMessage, ChatMessageFormatType, ChatArchiveJob
+from trsvcscore.db.models import ChatPersistJob, ChatMessage, \
+    ChatMessageFormatType, ChatArchiveJob, ChatSession, \
+    ChatHighlightSession
 
 from message_handler import ChatMessageHandler
 from persistsvc_exceptions import DuplicatePersistJobException
@@ -17,12 +19,13 @@ from topic_data_manager import TopicDataManager
 class ChatPersister(object):
     """
         Responsible for persisting all chat messages that are stored in the database.
-
         This class is responsible for reading all the ChatMessages
         that the Chat Service has persisted and creating new entities
         in the db according to the details of the chat message.
-
         Currently creates ChatMinute, ChatMarker, and ChatTag entities.
+
+        Responsible for creating ChatHighlightSession from the ChatSession.
+        Responsible for creating ChatArchiveJob to be processed by the archive svc.
     """
 
     def __init__(self, db_session_factory, job_id):
@@ -49,6 +52,7 @@ class ChatPersister(object):
         try:
             self._start_chat_persist_job()
             self._persist_data()
+            self._create_chat_highlight()
             self._create_chat_archive_job()
             self._end_chat_persist_job()
 
@@ -226,6 +230,73 @@ class ChatPersister(object):
         except Exception as e:
             self.log.exception(e)
             db_session.rollback()
+            raise e
         finally:
             if db_session:
                 db_session.close()
+
+    def _create_chat_highlight(self):
+        """ Create a ChatHighlightSession from the processed ChatSession.
+
+        By default, the chat being processed by this service will
+        be added to each participant's 'highlight reel' by creating
+        an associated ChatHighlightSession object.
+        Each ChatHighlightSession is assigned the lowest possible rank.
+
+        Special cases:
+            The Tutorial chat will not be added to a user's highlight
+            reel.
+        """
+        try:
+            db_session = self.create_db_session()
+
+            # Retrieve the ChatSession
+            chat_session = db_session.query(ChatSession).\
+                filter(ChatSession.id==self.chat_session_id).\
+                one()
+
+            # Special case: Tutorial chat
+            # Don't create a highlight for Tutorial chats
+            if self._is_tutorial(chat_session):
+                return
+
+            # Create ChatHighlightSession for each participant
+            # chat_sesssion.users returns django_models.User objects.
+            for user in chat_session.users:
+
+                # Determine how many highlight chats user has so that
+                # we can set the rank of the new highlight.  Highlight
+                # ranks start at 0, so setting the rank of the new
+                # highlight to the previous length will work.
+                highlight_count = db_session.query(ChatHighlightSession).\
+                    filter(ChatHighlightSession.user_id==user.id).\
+                    count()
+
+                highlight = ChatHighlightSession(
+                    chat_session_id=self.chat_session_id,
+                    user_id=user.id,
+                    rank=highlight_count)
+                db_session.add(highlight)
+
+            db_session.commit()
+        except Exception as e:
+            self.log.exception(e)
+            db_session.rollback()
+            raise e
+        finally:
+            if db_session:
+                db_session.close()
+
+
+    def _is_tutorial(self, chat_session):
+        """Check if ChatSession was for a Tutorial chat.
+
+        Returns:
+            Returns true if chat_session was a Tutorial,
+            returns false otherwise.
+        """
+        ret = False
+        tutorial_chat_title = 'Tutorial'
+        if chat_session.chat.topic.title == tutorial_chat_title:
+            ret = True
+        return ret
