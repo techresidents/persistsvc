@@ -258,6 +258,10 @@ class ChatPersister(object):
                 self.log.info("Skipping creation of ChatHighlight since this is a Tutorial chat.")
                 return
 
+            # Create nested session here to handle the case where the
+            # user has already created a chat highlight for this chat
+            # session.  This enables us to rollback only this transaction
+            # without affecting any of the other transactions in the db session.
             db_session.begin_nested()
 
             # Create ChatHighlightSession for each participant
@@ -276,23 +280,26 @@ class ChatPersister(object):
                     rank=highlight_count)
                 db_session.add(highlight)
 
-            # Flush here so that we can catch a duplicate key error.
-            # This occurs if the user has already manually added this
-            # chat to their highlight reel.
             db_session.flush()
 
+        # This occurs if the user has already manually added this
+        # chat to their highlight reel.
         except IntegrityError as e:
             if db_session:
+                # Roll back the nested session
                 db_session.rollback()
             reason = e.message
             if "key value violates unique constraint" in reason:
-                print '########## swallowed exception ##############'
+                # This is the exception we expected, so no need to raise
                 pass
             else:
+                # This is not the exception we expected so
+                # we need to raise it.
                 raise e
 
         except Exception as e:
             if db_session:
+                # Roll back the nested session
                 db_session.rollback()
             raise e
 
