@@ -62,9 +62,17 @@ class ChatPersister(object):
             db_session = self.create_db_session()
             self._persist_data(db_session)
             self._create_chat_archive_job(db_session)
-            self._create_chat_highlight(db_session)
+
+            # It's possible the user has already created a chat highlight for this chat.
+            # When this happens, calling commit() would cause the db session to rollback.
+            # To prevent losing all other session data, we create a separate db session.
+            # Note that we can't check for the existence of the chat highlight
+            # since it would be a potential race condition.
+            highlight_db_session = self.create_db_session()
+            self._create_chat_highlight(highlight_db_session)
+
             self._end_chat_persist_job(db_session)
-            db_session.commit() # commit nested chat highlight session
+            highlight_db_session.commit() # commit chat highlight session
             db_session.commit() # commit everything else
 
         except DuplicatePersistJobException:
@@ -78,11 +86,15 @@ class ChatPersister(object):
             self.log.exception(e)
             if db_session:
                 db_session.rollback()
+            if highlight_db_session:
+                highlight_db_session.rollback()
             self._abort_chat_persist_job()
 
         finally:
             if db_session:
                 db_session.close()
+            if highlight_db_session:
+                highlight_db_session.close()
 
 
     def _start_chat_persist_job(self):
@@ -258,12 +270,6 @@ class ChatPersister(object):
                 self.log.info("Skipping creation of ChatHighlight since this is a Tutorial chat.")
                 return
 
-            # Create nested session here to handle the case where the
-            # user has already created a chat highlight for this chat
-            # session.  This enables us to rollback only this transaction
-            # without affecting any of the other transactions in the db session.
-            db_session.begin_nested()
-
             # Create ChatHighlightSession for each participant
             # chat_sesssion.users returns django_models.User objects.
             for user in chat_session.users:
@@ -282,25 +288,18 @@ class ChatPersister(object):
 
             db_session.flush()
 
-        # This occurs if the user has already manually added this
-        # chat to their highlight reel.
         except IntegrityError as e:
-            if db_session:
-                # Roll back the nested session
-                db_session.rollback()
             reason = e.message
             if "key value violates unique constraint" in reason:
-                # This is the exception we expected, so no need to raise
-                pass
+                # This occurs if the user has already manually
+                # added this chat to their highlight reel.
+                # No need to re-raise.
+                if db_session:
+                    db_session.rollback()
             else:
-                # This is not the exception we expected so
-                # we need to raise it.
-                raise e
+                raise e # Not the expected exception
 
         except Exception as e:
-            if db_session:
-                # Roll back the nested session
-                db_session.rollback()
             raise e
 
     def _is_tutorial(self, chat_session):
