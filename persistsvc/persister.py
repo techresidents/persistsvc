@@ -165,7 +165,8 @@ class ChatPersister(object):
             db_session.commit()
         except Exception as e:
             self.log.error(e)
-            db_session.rollback()
+            if db_session:
+                db_session.rollback()
         finally:
             if db_session:
                 db_session.close()
