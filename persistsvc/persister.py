@@ -96,7 +96,6 @@ class ChatPersister(object):
             if highlight_db_session:
                 highlight_db_session.close()
 
-
     def _start_chat_persist_job(self):
         """Start processing the chat persist job.
 
@@ -232,6 +231,7 @@ class ChatPersister(object):
 
     def _create_chat_archive_job(self, db_session):
         try:
+            self.log.info("Creating ChatArchiveJob...")
             #wait 5 minutes before we start the archive job
             #since it takes Tokbox time a few minutes.
             not_before = func.current_timestamp() \
@@ -272,6 +272,7 @@ class ChatPersister(object):
 
             # Create ChatHighlightSession for each participant
             # chat_sesssion.users returns django_models.User objects.
+            self.log.info("Creating ChatHighlightSession for each chat participant...")
             for user in chat_session.users:
                 # Determine how many highlight chats user has so that
                 # we can set the rank of the new highlight.  Highlight
