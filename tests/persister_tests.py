@@ -334,6 +334,8 @@ class ChatPersisterTest(IntegrationTestCase):
 
 #    def test_abort_job(self):
 #        # TODO Verify all data is unwound if job is aborted
+         # This was tested manually, but could not find an easy
+         # way to induce the job to abort.
 #        pass
 #
 #
@@ -344,8 +346,6 @@ class ChatPersisterTest(IntegrationTestCase):
 #    def test_tutorial_chat(self):
 #        # TODO Verify no chat highlight is created for this job
 #        pass
-
-
 
 
 if __name__ == '__main__':
