@@ -2,6 +2,7 @@ import datetime
 import logging
 
 from sqlalchemy.sql import func
+from sqlalchemy.exc import IntegrityError
 
 from trchatsvc.gen.ttypes import Message
 from trpycore.thrift.serialization import deserialize
@@ -50,11 +51,29 @@ class ChatPersister(object):
             being persisted.
         """
         try:
+            # The start_job method has its own db_session
+            # since it needs to commit to the db immediately to
+            # claim the job.
             self._start_chat_persist_job()
-            self._persist_data()
-            self._create_chat_highlight()
-            self._create_chat_archive_job()
-            self._end_chat_persist_job()
+
+            # Create a single db_session for the rest of the db changes
+            # so that we can commit all of them together. This will
+            # make it easy to rerun jobs that fail.
+            db_session = self.create_db_session()
+            self._persist_data(db_session)
+            self._create_chat_archive_job(db_session)
+
+            # It's possible the user has already created a chat highlight for this chat.
+            # When this happens, calling commit() would cause the db session to rollback.
+            # To prevent losing all other session data, we create a separate db session.
+            # Note that we can't check for the existence of the chat highlight
+            # since it would be a potential race condition.
+            highlight_db_session = self.create_db_session()
+            self._create_chat_highlight(highlight_db_session)
+
+            self._end_chat_persist_job(db_session)
+            highlight_db_session.commit() # commit chat highlight session
+            db_session.commit() # commit everything else
 
         except DuplicatePersistJobException:
             self.log.warning("Chat persist job with job_id=%d already claimed. Stopping processing." % self.job_id)
@@ -65,14 +84,23 @@ class ChatPersister(object):
 
         except Exception as e:
             self.log.exception(e)
+            if db_session:
+                db_session.rollback()
+            if highlight_db_session:
+                highlight_db_session.rollback()
             self._abort_chat_persist_job()
 
+        finally:
+            if db_session:
+                db_session.close()
+            if highlight_db_session:
+                highlight_db_session.close()
 
     def _start_chat_persist_job(self):
         """Start processing the chat persist job.
 
-        Mark the ChatPersistJob record in the db as started by updating the 'start'
-        field with the current timestamp.
+        Mark the ChatPersistJob record in the db as started by
+        updating the 'owner' field and the 'start' field.
         """
         self.log.info("Starting chat persist job with job_id=%d ..." % self.job_id)
 
@@ -103,34 +131,29 @@ class ChatPersister(object):
             db_session.rollback()
             raise e
         finally:
-            db_session.close()
+            if db_session:
+                db_session.close()
 
-    def _end_chat_persist_job(self):
+    def _end_chat_persist_job(self, db_session):
         """End processing of the ChatPersistJob.
 
         Mark the ChatPersistJob record as finished by updating the 'end'
         field with the current time.
         """
-        self.log.info("Ending chat persist job with job_id=%d ..." % self.job_id)
-
         try:
-            db_session = self.create_db_session()
             job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
             job.end = func.current_timestamp()
             job.successful = True
-            db_session.commit()
+            db_session.flush()
+            self.log.info("Finishing chat persist job with job_id=%d ..." % self.job_id)
         except Exception as e:
-            self.log.exception(e)
-            db_session.rollback()
             raise e
-        finally:
-            db_session.close()
 
     def _abort_chat_persist_job(self):
         """Abort the ChatPersistJob.
 
-        Abort the current persist job. Reset the 'start' column and
-        'owner' column to NULL.
+        Abort the current persist job. Mark the
+        job's status as a failure.
         """
 
         self.log.error("Aborting chat persist job with job_id=%d ..." % self.job_id)
@@ -142,11 +165,13 @@ class ChatPersister(object):
             db_session.commit()
         except Exception as e:
             self.log.error(e)
-            db_session.rollback()
+            if db_session:
+                db_session.rollback()
         finally:
-            db_session.close()
+            if db_session:
+                db_session.close()
 
-    def _persist_data(self):
+    def _persist_data(self, db_session):
         """Persist chat data to the db
 
         This method will create the necessary chat minutes, tags,
@@ -154,8 +179,6 @@ class ChatPersister(object):
         that were created by the chat service.
         """
         try:
-            db_session = self.create_db_session()
-
             # Retrieve the chat session id
             job = db_session.query(ChatPersistJob).filter(ChatPersistJob.id==self.job_id).one()
             self.chat_session_id = job.chat_session.id
@@ -202,20 +225,14 @@ class ChatPersister(object):
             for model in models_to_persist:
                 db_session.add(model)
 
-            # commit all db changes
-            db_session.commit()
+            db_session.flush()
 
         except Exception as e:
-            self.log.exception(e)
-            db_session.rollback()
             raise e
-        finally:
-            db_session.close()
-    
-    def _create_chat_archive_job(self):
-        try:
-            db_session = self.create_db_session()
 
+    def _create_chat_archive_job(self, db_session):
+        try:
+            self.log.info("Creating ChatArchiveJob...")
             #wait 5 minutes before we start the archive job
             #since it takes Tokbox time a few minutes.
             not_before = func.current_timestamp() \
@@ -226,16 +243,11 @@ class ChatPersister(object):
                     not_before=not_before,
                     retries_remaining=3)
             db_session.add(job)
-            db_session.commit()
+            db_session.flush()
         except Exception as e:
-            self.log.exception(e)
-            db_session.rollback()
             raise e
-        finally:
-            if db_session:
-                db_session.close()
 
-    def _create_chat_highlight(self):
+    def _create_chat_highlight(self, db_session):
         """ Create a ChatHighlightSession from the processed ChatSession.
 
         By default, the chat being processed by this service will
@@ -248,8 +260,6 @@ class ChatPersister(object):
             reel.
         """
         try:
-            db_session = self.create_db_session()
-
             # Retrieve the ChatSession
             chat_session = db_session.query(ChatSession).\
                 filter(ChatSession.id==self.chat_session_id).\
@@ -258,12 +268,13 @@ class ChatPersister(object):
             # Special case: Tutorial chat
             # Don't create a highlight for Tutorial chats
             if self._is_tutorial(chat_session):
+                self.log.info("Skipping creation of ChatHighlight since this is a Tutorial chat.")
                 return
 
             # Create ChatHighlightSession for each participant
             # chat_sesssion.users returns django_models.User objects.
+            self.log.info("Creating ChatHighlightSession for each chat participant...")
             for user in chat_session.users:
-
                 # Determine how many highlight chats user has so that
                 # we can set the rank of the new highlight.  Highlight
                 # ranks start at 0, so setting the rank of the new
@@ -271,22 +282,27 @@ class ChatPersister(object):
                 highlight_count = db_session.query(ChatHighlightSession).\
                     filter(ChatHighlightSession.user_id==user.id).\
                     count()
-
                 highlight = ChatHighlightSession(
                     chat_session_id=self.chat_session_id,
                     user_id=user.id,
                     rank=highlight_count)
                 db_session.add(highlight)
 
-            db_session.commit()
-        except Exception as e:
-            self.log.exception(e)
-            db_session.rollback()
-            raise e
-        finally:
-            if db_session:
-                db_session.close()
+            db_session.flush()
 
+        except IntegrityError as e:
+            reason = e.message
+            if "key value violates unique constraint" in reason:
+                # This occurs if the user has already manually
+                # added this chat to their highlight reel.
+                # No need to re-raise.
+                if db_session:
+                    db_session.rollback()
+            else:
+                raise e # Not the expected exception
+
+        except Exception as e:
+            raise e
 
     def _is_tutorial(self, chat_session):
         """Check if ChatSession was for a Tutorial chat.
